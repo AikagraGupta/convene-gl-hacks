@@ -593,6 +593,7 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
         "private_revision": private["revision"],
         "private_mode": bool(private["inputs"]),
         "negotiation_events": [],
+        "call_provider": env("CALL_PROVIDER", "elevenlabs").lower(),
     }
 
     card = [
@@ -606,7 +607,11 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
     ]
     if hard_list:
         card.append(f"• Mentioning: {esc_join(hard_list[:3])}")
-    if state.negotiation_limits:
+    if state.negotiation_limits and state.approval_payload["call_provider"] == "vapi":
+        limits = state.negotiation_limits
+        card.append(f"• Group boundaries: {negotiation.clock(limits['start'])}–{negotiation.clock(limits['end'])}, "
+                    f"up to HK${limits['budget']:g}/person including charges; no deposits. Vapi will only inquire.")
+    elif state.negotiation_limits:
         limits = state.negotiation_limits
         card.append(f"• May negotiate: {negotiation.clock(limits['start'])}–{negotiation.clock(limits['end'])}, "
                     f"up to HK${limits['budget']:g}/person including charges. No deposits.")
@@ -614,7 +619,10 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
         card.append("• No time flexibility or spending authority set. Use /negotiate 19:00-20:00 budget 200 to delegate it.")
     if private["inputs"]:
         card.append("• Saved private requirements also apply. Identities, private limits and the call transcript will not be posted to this group.")
-    card.append("• This approves the displayed negotiation limits for the call. Staff must still confirm a matching offer.")
+    if state.approval_payload["call_provider"] == "vapi":
+        card.append("• Vapi will ask about availability and terms. It will not make or claim a reservation in this version.")
+    else:
+        card.append("• This approves the displayed negotiation limits for the call. Staff must still confirm a matching offer.")
     card.append("")
     if demo_override:
         card.append(
@@ -626,7 +634,10 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
             "ℹ️ This is a <b>real call to a real venue that consented in advance</b>. "
             "The agent says it is an AI in its first sentence. If it books a table, turn up or cancel."
         )
-    card.append("\nA human presses the button, and a human dials the phone. I never call on my own.")
+    if state.approval_payload["call_provider"] == "vapi":
+        card.append("\nA human must approve this exact call before Vapi dials. No call starts from chat alone.")
+    else:
+        card.append("\nA human presses the button, and a human dials the phone. I never call on my own.")
 
     save_state()
     tg.send(
@@ -644,16 +655,24 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
 # Approval
 # ===========================================================================
 
-def notify_bridge_dial() -> bool:
+def notify_bridge_dial() -> tuple[bool, str]:
     try:
         req = urllib.request.Request(
             f"{BRIDGE_BASE}/dial", data=b"{}", method="POST",
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            return resp.status == 200
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
-        return False
+        with urllib.request.urlopen(
+            req, timeout=40 if env("CALL_PROVIDER", "elevenlabs").lower() == "vapi" else 5
+        ) as resp:
+            return resp.status == 200, ""
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read().decode("utf-8")).get("error", "")
+        except (ValueError, OSError):
+            detail = ""
+        return False, str(detail)[:240] or f"call desk returned HTTP {exc.code}"
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False, "call desk is not reachable on :8080"
 
 
 def handle_callback(tg: Telegram, query: dict) -> None:
@@ -686,6 +705,10 @@ def handle_callback(tg: Telegram, query: dict) -> None:
         return
 
     payload = dict(state.approval_payload or {})
+    if str(payload.get("call_provider") or "elevenlabs").lower() != env("CALL_PROVIDER", "elevenlabs").lower():
+        tg.call("answerCallbackQuery", callback_query_id=query["id"],
+                text="Call method changed. Run /close for a new approval card.", show_alert=True)
+        return
     if not private_inputs.current(payload):
         tg.call("answerCallbackQuery", callback_query_id=query["id"], text="Private requirements changed. Run /close again.", show_alert=True)
         return
@@ -695,7 +718,7 @@ def handle_callback(tg: Telegram, query: dict) -> None:
             active = json.loads(PENDING_PATH.read_text(encoding="utf-8"))
         except (ValueError, OSError):
             active = {"status": "dialing"}
-        if active.get("status") in ("approved", "dialing"):
+        if active.get("status") in ("approved", "dialing", "vapi_dispatching", "vapi_calling", "vapi_dispatch_uncertain"):
             tg.call("answerCallbackQuery", callback_query_id=query["id"], text="Call desk busy. Finish or cancel the current call first.", show_alert=True)
             return
     payload["approved_by"] = who
@@ -709,20 +732,36 @@ def handle_callback(tg: Telegram, query: dict) -> None:
     tg.call("answerCallbackQuery", callback_query_id=query["id"], text="Approved — handing to the call desk.")
     state.approval_token = None
 
-    if notify_bridge_dial():
+    started, reason = notify_bridge_dial()
+    if started:
         reporting = "Only the booking result will be shared here." if payload.get("private_mode") else "I'll post the transcript here."
-        tg.send(chat_id,
-                f"✅ {esc(who)} approved it. Dial <code>{esc(payload['dial_number'])}</code> on your phone and put it on speaker. "
-                f"The call desk is ready. {reporting}")
+        if payload.get("call_provider") == "vapi":
+            tg.send(chat_id,
+                    f"✅ {esc(who)} approved it. Vapi is calling <code>{esc(payload['dial_number'])}</code> now. "
+                    "This is an availability inquiry; no reservation will be claimed. "
+                    + ("Only the result will be shared here." if payload.get("private_mode") else "The call transcript will appear here."))
+        else:
+            tg.send(chat_id,
+                    f"✅ {esc(who)} approved it. Dial <code>{esc(payload['dial_number'])}</code> on your phone and put it on speaker. "
+                    f"The call desk is ready. {reporting}")
     else:
-        payload["dial"] = True
-        PENDING_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-        tg.send(chat_id,
-                f"✅ {esc(who)} approved it, and the booking is queued for "
-                f"<code>{esc(payload['dial_number'])}</code>.\n\n"
-                "<i>The call desk isn't answering on :8080 though. Start it with "
-                "<code>python3 bridge/server.py</code> and open "
-                "<code>http://localhost:8080/</code> — it'll pick this up automatically.</i>")
+        if payload.get("call_provider") == "vapi":
+            current = json.loads(PENDING_PATH.read_text(encoding="utf-8"))
+            if current.get("status") == "approved":
+                current["status"] = "blocked"
+                PENDING_PATH.write_text(json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")
+                tg.send(chat_id, f"⚠️ Vapi did not start the call: {esc(reason)}. Run /close for a fresh approval after fixing this.")
+            else:
+                tg.send(chat_id, "⚠️ The call desk did not acknowledge the request, but Vapi may already be calling. Check the call desk and Vapi dashboard before trying again. No reservation is verified.")
+        else:
+            payload["dial"] = True
+            PENDING_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            tg.send(chat_id,
+                    f"✅ {esc(who)} approved it, and the booking is queued for "
+                    f"<code>{esc(payload['dial_number'])}</code>.\n\n"
+                    "<i>The call desk isn't answering on :8080 though. Start it with "
+                    "<code>python3 bridge/server.py</code> and open "
+                    "<code>http://localhost:8080/</code> — it'll pick this up automatically.</i>")
 
 
 # ===========================================================================
@@ -733,7 +772,7 @@ HELP = (
     "<b>Shum-AI</b>\n\n"
     "I read this chat, pull out the constraints you've already agreed on, find three places "
     "that fit, run a poll — and once one of you approves, I <b>phone the restaurant</b> "
-    "with a voice agent and book it.\n\n"
+    "with a voice agent to check availability and terms. A booking is reported only when verified.\n\n"
     "/decide — read the chat and propose three\n"
     "/close — close the poll, pick the winner, ask to call\n"
     "/private — private requirements; /private new starts a new outing\n"

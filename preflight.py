@@ -31,6 +31,7 @@ sys.path.insert(0, str(ROOT))
 
 import pipeline
 import places
+import vapi_calls
 from envlite import check_tls, env, env_list, load_env
 
 GREEN, RED, YELLOW, DIM, BOLD, RESET = (
@@ -315,6 +316,19 @@ def check_bridge() -> None:
              "python3 bridge/server.py   # then open http://localhost:8080/")
 
 
+def check_vapi() -> None:
+    if env("CALL_PROVIDER", "elevenlabs").lower() != "vapi":
+        return
+    try:
+        phone = vapi_calls.phone_number()
+        agent = vapi_calls.assistant()
+    except vapi_calls.VapiError as exc:
+        bad("vapi", str(exc), "set VAPI_PHONE_NUMBER_ID to the imported Twilio number ID, then run python setup_vapi.py --apply")
+        return
+    ok("vapi", f"active {phone.get('provider')} number {phone.get('number')} and Convene assistant {agent.get('name')}")
+    warn("vapi", "outbound route to Hong Kong is not proven until a consented test call completes")
+
+
 def check_safety() -> None:
     demo = env("DEMO_PHONE")
     allow = [n for n in env_list("CONSENTED_NUMBERS") if n and n != "+852"]
@@ -356,7 +370,7 @@ def main() -> int:
 
     for step in (check_tls_store, check_env_file, check_telegram, check_gemini,
                  check_exa, check_overpass, check_cache, check_elevenlabs,
-                 check_bridge, check_safety):
+                 check_bridge, check_vapi, check_safety):
         try:
             step()
         except Exception as exc:
@@ -379,8 +393,8 @@ def main() -> int:
         print(f"\n{RED}{BOLD}NOT READY{RESET} — fix the {len(fails)} FAIL line(s) above.\n")
         return 1
     if warns:
-        print(f"\n{YELLOW}READY, with {len(warns)} degradation(s){RESET} — "
-              f"each of those has a fallback. You can demo.\n")
+        print(f"\n{YELLOW}READY, with {len(warns)} warning(s){RESET} — "
+              "review the warnings before the demo.\n")
         return 0
     print(f"\n{GREEN}{BOLD}ALL SYSTEMS GO{RESET}\n")
     return 0

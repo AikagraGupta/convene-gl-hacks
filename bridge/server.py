@@ -44,6 +44,7 @@ import invite  # noqa: E402
 import pipeline  # noqa: E402
 import negotiation  # noqa: E402
 import private_inputs  # noqa: E402
+import vapi_calls  # noqa: E402
 from envlite import env, env_flag, load_env, warn_if_tls_broken  # noqa: E402
 from tgtext import esc  # noqa: E402
 
@@ -52,6 +53,7 @@ CALL_LOG_DIR = ROOT / "call_log"
 PORT = 8080
 
 _lock = threading.Lock()
+_vapi_dispatch_lock = threading.Lock()
 
 # Telegram rate-limits edits to a message, and a voice call produces a turn
 # every couple of seconds. Throttling here rather than dropping turns: each
@@ -455,6 +457,61 @@ def archive_call(pending: dict, body: dict) -> Path:
     return path
 
 
+def format_vapi_result(pending: dict, turns: list[dict]) -> str:
+    """Report a real phone inquiry without presenting it as a reservation."""
+    name = pending.get("restaurant_display") or pending.get("restaurant_name") or "the venue"
+    lines = [f"☎️ <b>Inquiry finished — {esc(name)}</b>"]
+    if not any(turn.get("source") == "user" for turn in turns):
+        lines.append("No response from venue staff was recorded.")
+    lines.append("<b>No reservation is verified in Convene.</b> Review the call and confirm with the venue before making plans.")
+    if pending.get("private_mode"):
+        lines.append("The transcript stays on the operator's call desk because private requirements were used.")
+    if pending.get("demo_override"):
+        lines.append("<i>Demo call: the number that rang belongs to the team, not the listed venue.</i>")
+    return "\n".join(lines)
+
+
+def monitor_vapi_call(call_id: str) -> None:
+    """Poll the call API: localhost cannot receive Vapi's public webhooks."""
+    last_turns: list[dict] = []
+    for _ in range(120):  # ten minutes, longer than the assistant's 3-minute cap
+        pending = read_pending()
+        if pending.get("vapi_call_id") != call_id or pending.get("status") != "vapi_calling":
+            return
+        try:
+            call = vapi_calls.get_call(call_id)
+        except vapi_calls.VapiError as exc:
+            print(f"[bridge] Vapi status check failed: {exc}")
+            time.sleep(5)
+            continue
+        turns = vapi_calls.turns(call)
+        if turns != last_turns:
+            last_turns = turns
+            patch_pending(live_turns=turns)
+            if pending.get("live_message_id"):
+                edit_telegram(pending.get("chat_id"), pending["live_message_id"],
+                              render_live(pending, turns))
+        if call.get("status") == "ended":
+            current = read_pending()
+            if current.get("vapi_call_id") != call_id or current.get("status") != "vapi_calling":
+                return
+            if current.get("live_message_id"):
+                edit_telegram(current.get("chat_id"), current["live_message_id"],
+                              render_live(current, turns, finished=True))
+            archive_call(current, {"provider": "vapi", "call": call})
+            send_telegram(current.get("chat_id"), format_vapi_result(current, turns))
+            patch_pending(status="done", dial=False, live_turns=turns,
+                          finished_at=datetime.now(timezone.utc).isoformat())
+            print(f"[bridge] Vapi call finished: {call_id}")
+            return
+        time.sleep(5)
+    pending = read_pending()
+    if pending.get("vapi_call_id") == call_id and pending.get("status") == "vapi_calling":
+        patch_pending(status="vapi_review_required")
+        send_telegram(pending.get("chat_id"),
+                      "The Vapi call is no longer being tracked automatically. Check its status in Vapi before trying again. No reservation is confirmed.")
+
+
 # --------------------------------------------------------------------------
 # HTTP
 # --------------------------------------------------------------------------
@@ -538,6 +595,7 @@ class Handler(BaseHTTPRequestHandler):
                     "booker_name": env("BOOKER_NAME", "a guest"),
                     "callback_number": env("CALLBACK_NUMBER"),
                     "demo_phone_active": bool(env("DEMO_PHONE")),
+                    "call_provider": env("CALL_PROVIDER", "elevenlabs"),
                 }
             )
         elif route == "/pending":
@@ -593,6 +651,37 @@ class Handler(BaseHTTPRequestHandler):
             if str(pending.get("status") or "") not in ("approved", "awaiting_approval"):
                 self._json({"error": f"this booking is {pending.get('status')!r}, "
                                      "not waiting to be dialled"}, 409)
+                return
+            if str(pending.get("call_provider") or env("CALL_PROVIDER", "elevenlabs")).lower() == "vapi":
+                # Serialize the approval-to-call transition. Duplicate HTTP
+                # requests must never launch two paid phone calls.
+                with _vapi_dispatch_lock:
+                    pending = read_pending()
+                    if pending.get("status") != "approved" or pending.get("vapi_call_id"):
+                        self._json({"error": "a fresh approved call is required"}, 409)
+                        return
+                    try:
+                        phone = vapi_calls.preflight(pending)
+                    except vapi_calls.VapiError as exc:
+                        self._json({"error": str(exc)}, 409)
+                        return
+                    patch_pending(status="vapi_dispatching", dial=False, call_provider="vapi")
+                    try:
+                        call = vapi_calls.start_call(pending, phone)
+                    except vapi_calls.VapiError as exc:
+                        # A timeout can be ambiguous. Never automatically
+                        # retry a create-call request that might have landed.
+                        patch_pending(status="vapi_dispatch_uncertain", vapi_error=str(exc))
+                        self._json({"error": str(exc) + "; check Vapi before retrying"}, 502)
+                        return
+                    live_id = send_telegram_returning_id(
+                        pending.get("chat_id"), render_live(pending, []))
+                    updated = patch_pending(status="vapi_calling", dial=False,
+                                            vapi_call_id=call["id"], live_message_id=live_id,
+                                            live_turns=[], vapi_started_at=datetime.now(timezone.utc).isoformat())
+                threading.Thread(target=monitor_vapi_call, args=(call["id"],), daemon=True).start()
+                self._json({"ok": True, "provider": "vapi", "call_id": call["id"],
+                            "status": updated["status"]})
                 return
             # Open the live transcript message now, so the group sees the call
             # start rather than only its result.
@@ -756,6 +845,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(updated)
 
         elif route == "/cancel":
+            if read_pending().get("status") in ("vapi_dispatching", "vapi_calling", "vapi_dispatch_uncertain"):
+                self._json({"error": "Vapi call may be live; end it in Vapi before changing this record"}, 409)
+                return
             # Marking a finished call "cancelled" rewrites history: the table
             # was booked, and the record would then say it never was.
             if str(read_pending().get("status") or "") == "done":
@@ -785,6 +877,9 @@ def open_call_page() -> None:
     Best effort and silent on failure. A headless run, a locked-down laptop or
     a machine with no browser are all fine; the page is still reachable.
     """
+    if env("CALL_PROVIDER", "elevenlabs").lower() == "vapi":
+        print("[bridge] Vapi handles audio; no local microphone page is needed")
+        return
     if env_flag("NO_AUTO_OPEN"):
         print("[bridge] NO_AUTO_OPEN set \u2014 open the call page yourself")
         return
@@ -806,6 +901,9 @@ def main() -> None:
     if not env("ELEVENLABS_AGENT_ID"):
         print("[bridge] WARNING: ELEVENLABS_AGENT_ID is empty — the call page will refuse to start.")
     print(f"[bridge] listening on http://localhost:{PORT}")
+    pending = read_pending()
+    if pending.get("status") == "vapi_calling" and pending.get("vapi_call_id"):
+        threading.Thread(target=monitor_vapi_call, args=(pending["vapi_call_id"],), daemon=True).start()
     threading.Timer(1.0, open_call_page).start()   # after the socket is up
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
 

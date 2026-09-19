@@ -69,7 +69,7 @@ def run() -> Suite:
     # unit test decide whether a live bridge happens to be listening.
     real_notify = bot.notify_bridge_dial
     bridge_calls: list[bool] = []
-    bot.notify_bridge_dial = lambda: (bridge_calls.append(True), True)[1]
+    bot.notify_bridge_dial = lambda: (bridge_calls.append(True), (True, ""))[1]
     # Redirect persistence for the entire suite. Without this, every handler
     # under test wrote into the project's real chat_state.json and the next
     # real bot start restored test chats as if they were a conversation.
@@ -494,7 +494,7 @@ def run() -> Suite:
 
     # The bridge being down must be handled, not silently swallowed.
     TMP_PENDING.write_text(json.dumps({"status": "done"}))  # previous call has finished
-    bot.notify_bridge_dial = lambda: False
+    bot.notify_bridge_dial = lambda: (False, "call desk is not reachable on :8080")
     st = seeded_state(None)
     st.constraints = {"party_size": 6, "when_text": "Friday 8pm", "hard": []}
     tg = FakeTelegram({"stopPoll": {"options": [
@@ -509,7 +509,46 @@ def run() -> Suite:
          written_down["dial"], True)
     s.contains("and the chat is told how to start the call desk",
                tg.sent_text(), "bridge/server.py")
-    bot.notify_bridge_dial = lambda: (bridge_calls.append(True), True)[1]
+    bot.notify_bridge_dial = lambda: (bridge_calls.append(True), (True, ""))[1]
+
+    # Vapi's approved outbound leg must never tell the group to dial by hand,
+    # and a rejected dispatch must not arm the ElevenLabs browser.
+    previous_pending = TMP_PENDING.read_text(encoding="utf-8")
+    os.environ["CALL_PROVIDER"] = "vapi"
+    old_card = seeded_state(None)
+    old_card.approval_token = "old-method"
+    old_card.approval_payload = {"call_provider": "elevenlabs"}
+    tg = FakeTelegram()
+    bot.handle_callback(tg, {"id": "cb", "data": "ok:old-method",
+                             "from": {"first_name": "Dan"}, "message": {"chat": {"id": -100}}})
+    s.contains("old ElevenLabs approval cannot silently become a Vapi call",
+               str(tg.find("answerCallbackQuery")), "Call method changed")
+    TMP_PENDING.write_text(json.dumps({"status": "done"}))
+    st = seeded_state(None)
+    tg = FakeTelegram({"stopPoll": {"options": [
+        {"voter_count": 0}, {"voter_count": 3}, {"voter_count": 0}, {"voter_count": 0}]}})
+    bot.handle_close(tg, -100, st)
+    s.contains("Vapi approval card describes inquiry-only behavior", tg.sent_text(), "will not make or claim a reservation")
+    tg = FakeTelegram()
+    bot.handle_callback(tg, {"id": "cb", "data": f"ok:{st.approval_token}",
+                             "from": {"first_name": "Dan"}, "message": {"chat": {"id": -100}}})
+    s.contains("Vapi approval announces outbound calling", tg.sent_text(), "Vapi is calling")
+    s.eq("Vapi approval leaves the local microphone page unarmed",
+         json.loads(TMP_PENDING.read_text())["dial"], False)
+    TMP_PENDING.write_text(json.dumps({"status": "done"}))
+    bot.notify_bridge_dial = lambda: (False, "imported number unavailable")
+    st = seeded_state(None)
+    tg = FakeTelegram({"stopPoll": {"options": [
+        {"voter_count": 0}, {"voter_count": 3}, {"voter_count": 0}, {"voter_count": 0}]}})
+    bot.handle_close(tg, -100, st)
+    tg = FakeTelegram()
+    bot.handle_callback(tg, {"id": "cb", "data": f"ok:{st.approval_token}",
+                             "from": {"first_name": "Dan"}, "message": {"chat": {"id": -100}}})
+    s.eq("failed Vapi dispatch cannot auto-retry", json.loads(TMP_PENDING.read_text())["status"], "blocked")
+    s.eq("failed Vapi dispatch does not arm ElevenLabs", json.loads(TMP_PENDING.read_text())["dial"], False)
+    TMP_PENDING.write_text(previous_pending, encoding="utf-8")
+    os.environ.pop("CALL_PROVIDER", None)
+    bot.notify_bridge_dial = lambda: (bridge_calls.append(True), (True, ""))[1]
 
     tg = FakeTelegram()
     bot.handle_callback(tg, {"id": "cb", "data": "ok:stale-token",
@@ -669,7 +708,7 @@ def run() -> Suite:
     bot.notify_bridge_dial = real_notify
     bot.STATE_PATH = real_state_path
     bot.STATE.clear()
-    for key in ("DEMO_PHONE", "CONSENTED_NUMBERS", "ALLOW_ANY_NUMBER"):
+    for key in ("DEMO_PHONE", "CONSENTED_NUMBERS", "ALLOW_ANY_NUMBER", "CALL_PROVIDER"):
         os.environ.pop(key, None)
 
     # The suite must not create or modify the real state file. Whether one

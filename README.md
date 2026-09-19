@@ -73,11 +73,11 @@ In Hong Kong, phoning to book is the cultural norm. It's also the only option, b
 
 The industry pattern is link handoff. So "books the table" cannot be real via API. That leaves two options: fake the final step, or actually phone them.
 
-**We phone them.** An ElevenLabs voice agent runs in a browser tab over WebRTC, a human dials the restaurant on their own phone and puts it on speakerphone, and the two talk through the laptop's microphone and speakers. Acoustic coupling.
+**We phone them.** The default ElevenLabs path runs a voice agent in a browser tab over WebRTC while a human dials on a separate phone and puts it on speakerphone. An optional Vapi path places the call from an imported Twilio number after the same group approval. That path currently makes an availability inquiry only; it never reports a reservation as booked.
 
 Nothing in the pipeline is mocked. The last step is the real one.
 
-### Why acoustic coupling and not Twilio
+### Why the default path uses acoustic coupling
 
 | | Twilio path | This |
 |---|---|---|
@@ -89,7 +89,7 @@ Nothing in the pipeline is mocked. The last step is the real one.
 
 ElevenLabs moved Agents to WebRTC specifically for *"best-in-class echo cancellation and background noise removal"*, which is exactly the problem a phone speaker next to a laptop mic creates. The hard part was already built.
 
-The second consequence matters as much: **no ngrok, no cloudflared, no public webhook.** A tunnel that dies at 16:04 is the single most common way a hackathon voice demo fails, and the possibility has been removed rather than hoped away.
+The second consequence matters as much: **no ngrok, no cloudflared, no public webhook.** The optional Vapi path also avoids a public webhook by polling the Vapi call API for its result.
 
 ## Architecture
 
@@ -108,13 +108,15 @@ The second consequence matters as much: **no ngrok, no cloudflared, no public we
         │
         └──────────────► bridge/server.py  :8080   /pending  /dial  /outcome
                                 │
-                                ├──► bridge/call_page.html   ElevenLabs over WebRTC
+                                ├──► bridge/call_page.html   ElevenLabs over WebRTC (default)
                                 │        │
                                 │        ▼
                                 │   laptop speakers ──► YOUR PHONE on speaker ──► restaurant
                                 │   laptop mic     ◄── phone's speaker         ◄──
                                 │
-                                └──► posts the transcript back into the group chat
+                                ├──► Vapi /call + imported Twilio number (optional)
+                                │       └──► GET /call/:id for transcript and status
+                                └──► posts the result back into the group chat
 ```
 
 ## What is real and what is not
@@ -129,7 +131,7 @@ Stated plainly, because a mocked final step is the most common way a demo gets m
 
 **Honest limitations:**
 - **OpenStreetMap phone coverage is about one place in five.** Measured on the cache this repo builds: 602 named restaurants across HK Island north shore, Kowloon and the New Territories spine, 125 of them with a phone number that normalises to a dialable +852 — 21%. Phone-bearing rows are therefore sorted first everywhere — a recommendation you cannot dial is worthless to this agent.
-- **A human dials.** The agent does not place the call itself; it speaks once a person has connected it. That's a safety decision, not a missing feature.
+- **The default ElevenLabs path needs a human to dial.** The optional Vapi path dials only after a human approves the exact displayed call, and currently checks availability without booking.
 - **The agent speaks English and understands Cantonese.** ElevenLabs Scribe does Cantonese speech-to-text at 5.9% WER (vs Whisper large-v3 at 13.2%), but ElevenLabs TTS has no Cantonese voice at all — the model list has Mandarin and no Yue. So: English out, Cantonese in. That is how a large share of Hong Kong service calls already run.
 - **Exa is an enhancement, never a dependency.** Every failure path returns `[]`. It finds names; OpenStreetMap makes them callable.
 - **The operator console is a second front end, not the primary one.** It builds and type-checks clean, and its approval step *is* the suspended tool call — `place_call` has a `render` and no handler, so the model cannot dial on its own. But the Telegram flow is the one that has been driven end to end against real restaurants; the console has not.
@@ -141,7 +143,7 @@ Stated plainly, because a mocked final step is the most common way a demo gets m
 Not optional polish. These are the difference between a good demo and an irresponsible one.
 
 1. **The agent discloses it is an AI in its first sentence.** Not on request, not buried. It's in the agent's fixed prompt, and this repo only ever passes *dynamic variables* — the booking facts — so the disclosure cannot be edited out from the calling code.
-2. **A human presses the button and a human dials.** The agent never initiates a call.
+2. **A human approves the exact call.** In ElevenLabs mode a human also dials. In Vapi mode approval initiates one outbound call; a duplicate `/dial` cannot start another.
 3. **`CONSENTED_NUMBERS` is an allowlist enforced in code.** A booking for a number nobody agreed to is refused at the approval gate, with an explanation posted to the chat. See `resolve_dial_target()` in `bot.py`.
 4. **`DEMO_PHONE` routes every call to a number you control**, whichever restaurant won the poll. The approval card and the call page both say so out loud.
 5. **No invented phone numbers, anywhere.** The model is explicitly forbidden from emitting one, and `_rehydrate()` in `pipeline.py` structurally drops any phone field the model returns — the digits that get dialled come only from OpenStreetMap. The offline seed list in `places.py` carries names with `phone: None` rather than numbers typed from memory.
@@ -157,8 +159,10 @@ Not optional polish. These are the difference between a good demo and an irrespo
 | `NO_AUTO_OPEN` | unset | Stops the bridge opening the call desk in your browser on start. Set it and you must open `http://localhost:8080/` yourself — if you forget, an approved call rings a phone with no agent on the line. |
 | `CONSOLE_ORIGIN` | `http://localhost:3000` | The single origin allowed through CORS. Not a wildcard. |
 | `ELEVENLABS_API_KEY` | empty | Optional. Lets the bridge read the agent's own post-call analysis; without it the outcome is derived from the transcript instead, and the chat message says which. |
+| `CALL_PROVIDER` | `elevenlabs` | Set to `vapi` for automated outbound inquiry after an imported Twilio number and Vapi assistant are configured. |
+| `VAPI_PHONE_NUMBER_ID` | empty | Vapi ID of the imported, active Twilio number. A free Vapi-managed number cannot dial outbound. |
 
-There is no auto-dial switch. There was one, and it worked; it was removed because it put the call's audio on the same machine as the agent, where each end's echo cancellation deletes the signal the other needs. A human dials.
+There is no local auto-dial in ElevenLabs mode: it put the call audio on the same machine as the agent, where echo cancellation deleted the signal both ways. Vapi's cloud voice path avoids that acoustic problem but currently stops at an inquiry because it has no public policy-check tool.
 
 ## Setup
 
@@ -228,6 +232,8 @@ Stdlib only. Nothing to install.
 2. **`/setprivacy` → Disable.** Without this the bot cannot see group messages at all and nothing works.
 
 **ElevenLabs:** create an agent, set **authentication OFF** (otherwise connecting by plain `agentId` fails and you need signed URLs), then use `setup_agent.py` to provision the prompt, client tool, and outcome schema from `docs/elevenlabs-agent.md`.
+
+**Vapi outbound option:** import a Twilio number into Vapi, set `VAPI_API_KEY`, `VAPI_ASSISTANT_ID`, and `VAPI_PHONE_NUMBER_ID`, then run `python setup_vapi.py --apply`. This backs up and configures the assistant for disclosed, inquiry-only calls. Set `CALL_PROVIDER=vapi` and restart the bot and bridge. Run `python preflight.py` before approving a call. The call destination still comes from `DEMO_PHONE` or the consent allowlist; the Twilio number is the caller ID. An active imported number does not prove that Twilio can reach the Hong Kong destination until a consented test call succeeds.
 
 **Build the offline safety net while you have working wifi:**
 ```bash
@@ -342,7 +348,7 @@ It was 79 seconds before two fixes: Gemini was spending its whole token budget o
 | Fallback | OpenRouter | Different vendor, different outage |
 | Discovery | Exa | Semantic search in the group's own words |
 | Phone numbers | Overpass / OpenStreetMap | No key, real HK data, a licence that permits this |
-| Voice | ElevenLabs Agents (WebRTC) | Browser-based, no phone number, built-in echo cancellation |
+| Voice | ElevenLabs Agents (default); Vapi + Twilio (optional) | Manual speakerphone booking flow or approved outbound inquiry |
 
 ## Licence
 
