@@ -93,4 +93,32 @@ def run() -> Suite:
             s.eq("only one outbound call was requested", create.call_count, 1)
         s.contains("Vapi result does not claim a booking", server.format_vapi_result(pending, []),
                    "No reservation is verified")
+        # A completed Vapi call must actually close the Telegram live message
+        # and send a result. Vapi's real artifacts label agent turns "bot".
+        ended = {"status": "ended", "endedReason": "customer-ended-call", "artifact": {
+            "messages": [{"role": "bot", "message": "I'm an AI assistant."},
+                         {"role": "user", "message": "We have a table."}]}}
+        with TemporaryDirectory() as directory, \
+             patch.object(server, "PENDING_PATH", Path(directory) / "pending.json"), \
+             patch.object(server.vapi_calls, "get_call", return_value=ended), \
+             patch.object(server, "archive_call", return_value=Path(directory) / "call.json"), \
+             patch.object(server, "send_telegram", return_value=True) as send, \
+             patch.object(server, "edit_telegram", return_value=True) as edit:
+            server.write_pending({**pending, "status": "vapi_calling", "vapi_call_id": "call-1",
+                                  "live_message_id": 5, "live_turns": []})
+            server.monitor_vapi_call("call-1")
+            s.eq("completed call closes local state", server.read_pending()["status"], "done")
+            s.eq("completed call posts one group result", send.call_count, 1)
+            s.contains("Telegram live transcript includes Vapi's bot turn",
+                       str(edit.call_args_list), "I'm an AI assistant")
+            s.contains("group result does not assert a booking", send.call_args.args[1],
+                       "No reservation is verified")
+            send.reset_mock()
+            edit.reset_mock()
+            server.write_pending({**pending, "status": "vapi_calling", "vapi_call_id": "call-2",
+                                  "live_message_id": 6, "private_mode": True, "live_turns": []})
+            server.monitor_vapi_call("call-2")
+            s.check("private transcript stays out of Telegram",
+                    "We have a table" not in str(edit.call_args_list)
+                    and "We have a table" not in str(send.call_args_list))
     return s
