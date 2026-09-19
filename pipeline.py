@@ -763,8 +763,7 @@ def _supplement_explicit_facts(model: dict, chat_text: str) -> dict:
         model["prefer_cuisines"] = [value for value in model["prefer_cuisines"]
                                      if not stale(value)]
         model["open_questions"] = [question for question in model["open_questions"]
-                                   if not (stale(question) and
-                                           re.search(r"\b(?:still|switch|changed|instead)\b", question, re.I))]
+                                   if not stale(question)]
     if model["coming_from"]:
         # The search layer computes fair meeting districts from these origins;
         # presenting that computation as a question for the friends is noise.
