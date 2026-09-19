@@ -47,3 +47,4 @@ _memory_backup/
 # Next.js build metadata
 console/tsconfig.tsbuildinfo
 places_cache_*.json
+private_inputs.sqlite3*

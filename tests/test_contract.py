@@ -143,7 +143,7 @@ def run() -> Suite:
     # The data-collection schema spans three files and a dashboard.
     doc_fields = set(re.findall(r"^\| `([a-z_]+)` \|", AGENT_DOC, re.M))
     server_fields = set(re.findall(r'collected\.get\("([a-z_]+)"\)', SERVER_SRC))
-    s.check("the documented schema has six fields", len(doc_fields) == 6, f"found {sorted(doc_fields)}")
+    s.check("the documented schema has eleven outcome and negotiation fields", len(doc_fields) == 11, f"found {sorted(doc_fields)}")
     s.check("every schema field server.py reads is one the doc defines",
             not (server_fields - doc_fields), f"undefined: {sorted(server_fields - doc_fields)}")
     s.check("preflight checks the schema fields too",

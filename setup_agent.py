@@ -32,6 +32,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from envlite import env, load_env
+from negotiation import client_tool
 
 DOC = ROOT / "docs" / "elevenlabs-agent.md"
 API = "https://api.elevenlabs.io/v1/convai"
@@ -217,10 +218,28 @@ def main() -> int:
     if dry_run:
         print(f"\n{DIM}--dry-run: nothing sent. Payload:{RESET}")
         print(json.dumps(config, indent=2)[:1500] + "\n...")
+        print("Negotiation client tool (will be attached by ID):")
+        print(json.dumps(client_tool(), indent=2))
         return 0
 
     existing = env("ELEVENLABS_AGENT_ID")
     on_account = {a.get("agent_id") for a in (_call("/agents?page_size=30").get("agents") or [])}
+
+    # Reuse only this agent's tool; do not edit another agent's shared tool by name.
+    tool_id = None
+    old_ids = []
+    if existing and existing in on_account:
+        old = _call(f"/agents/{existing}")
+        old_ids = (((old.get("conversation_config") or {}).get("agent") or {}).get("prompt") or {}).get("tool_ids") or []
+        for candidate_id in old_ids:
+            tool = _call(f"/tools/{candidate_id}")
+            if (tool.get("tool_config") or {}).get("name") == "evaluate_offer":
+                tool_id = candidate_id
+                _call(f"/tools/{tool_id}", {"tool_config": client_tool()}, "PATCH")
+                break
+    if not tool_id:
+        tool_id = _call("/tools", {"tool_config": client_tool()}, "POST")["id"]
+    config["conversation_config"]["agent"]["prompt"]["tool_ids"] = list(dict.fromkeys([*old_ids, tool_id]))
 
     if existing and existing in on_account:
         _call(f"/agents/{existing}", config, "PATCH")
@@ -242,6 +261,8 @@ def main() -> int:
 
     print(f"\n{BOLD}Verified on the server{RESET}")
     checks = [
+        ("negotiation tool attached", tool_id in (agent.get("prompt") or {}).get("tool_ids", [])),
+        ("negotiation tool waits for response", (_call(f"/tools/{tool_id}").get("tool_config") or {}).get("expects_response") is True),
         ("prompt stored", len(str((agent.get("prompt") or {}).get("prompt") or "")) > 500),
         ("first message stored", bool(agent.get("first_message"))),
         ("AI disclosure in the stored first message",

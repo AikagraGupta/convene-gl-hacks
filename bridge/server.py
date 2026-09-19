@@ -41,6 +41,8 @@ sys.path.insert(0, str(ROOT))
 
 import invite  # noqa: E402
 import pipeline  # noqa: E402
+import negotiation  # noqa: E402
+import private_inputs  # noqa: E402
 from envlite import env, env_flag, load_env, warn_if_tls_broken  # noqa: E402
 from tgtext import esc  # noqa: E402
 
@@ -227,6 +229,9 @@ def render_live(pending: dict, turns: list[dict], finished: bool = False) -> str
     the moment a human can say "no, that's wrong" while it still matters.
     """
     name = pending.get("restaurant_display") or pending.get("restaurant_name") or "the restaurant"
+    if pending.get("private_mode"):
+        return (f"<b>{'Call finished' if finished else 'Checking with the venue'} — {esc(name)}</b>\n"
+                "Private requirements are being checked. The transcript stays on the operator's call desk; only the booking result is shared here.")
     head = (f"\u2705 <b>Call finished \u2014 {esc(name)}</b>" if finished
             else f"\U0001f4de <b>On the phone with {esc(name)}\u2026</b>")
 
@@ -303,15 +308,21 @@ def format_outcome(pending: dict, body: dict) -> str:
         lines.append(f"Wait: ~{esc(collected['wait_estimate_minutes'])} min")
     if collected.get("booking_name"):
         lines.append(f"Under: {esc(collected['booking_name'])}")
-    if collected.get("staff_notes"):
+    if collected.get("staff_notes") and not pending.get("private_mode"):
         lines.append(f"Note: {esc(collected['staff_notes'])}")
+    if status == "needs_approval":
+        lines.append("<b>Not confirmed by Convene.</b> The offer needs review against the agreed limits. "
+                     "Review the call desk, settle any changes, then run /close for a fresh approval and call. "
+                     "Do not assume a reservation exists.")
 
     if status in ("confirmed", "booked"):
         # One link, everybody's own calendar. Telegram does not hand out member
         # email addresses -- correctly -- so there is nobody to send an invite
         # TO. A click-to-add link needs no addresses, no OAuth and no account,
         # and works for people who are not on Google Calendar at all.
-        link = invite.calendar_url(pending, collected)
+        # Calendar descriptions must not smuggle private staff notes into the group.
+        calendar_result = {**collected, "staff_notes": ""} if pending.get("private_mode") else collected
+        link = invite.calendar_url(pending, calendar_result)
         if link:
             lines.append(f"\n\U0001f4c5 <a href=\"{esc(link)}\">Add to your calendar</a>"
                          " \u2014 everyone tap it once.")
@@ -342,6 +353,31 @@ def format_outcome(pending: dict, body: dict) -> str:
             "we control, not to the restaurant.</i>"
         )
     return "\n".join(lines)
+
+
+def check_offer(pending: dict, offer: dict) -> dict:
+    if not private_inputs.current(pending):
+        return {"action": "stop", "checks": [], "instruction": "Requirements changed after approval. Do not commit. End the call and request fresh group approval."}
+    return negotiation.evaluate(pending["negotiation"], offer)
+
+
+def validate_outcome(pending: dict, collected: dict) -> dict:
+    """Never label an unchecked voice-model claim as an authorised booking."""
+    if not pending.get("negotiation") or collected.get("status") not in ("confirmed", "booked"):
+        return collected
+    events = pending.get("negotiation_events") or []
+    latest = events[-1] if events else {}
+    offer = latest.get("offer") or {}
+    parsed = invite._parse_clock(str(collected.get("confirmed_time") or ""))
+    time_text = negotiation.clock(parsed[0] * 60 + parsed[1]) if parsed else None
+    final_offer = {key: collected.get(key) for key in
+                   ("price_per_person", "deposit_total", "currency", "same_day", "requirements_met")}
+    final_offer.update(time=time_text, party_size=collected.get("confirmed_party_size"))
+    valid = (latest.get("result", {}).get("action") == "accept"
+             and private_inputs.current(pending)
+             and negotiation.evaluate(pending["negotiation"], final_offer)["action"] == "accept"
+             and all(final_offer[key] == offer.get(key) for key in final_offer))
+    return collected if valid else {**collected, "status": "needs_approval"}
 
 
 def archive_call(pending: dict, body: dict) -> Path:
@@ -449,6 +485,26 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         route = urllib.parse.urlparse(self.path).path
         body = self._body()
+        if not isinstance(body, dict):
+            self._json({"error": "JSON object required"}, 400)
+            return
+        pending = read_pending()
+        if route in ("/negotiate", "/turn", "/outcome") and pending.get("negotiation"):
+            if body.get("booking_id") != pending.get("id") or pending.get("status") != "dialing":
+                self._json({"error": "stale or inactive call"}, 409)
+                return
+
+        if route == "/negotiate":
+            if not pending.get("negotiation") or not isinstance(body.get("offer"), dict):
+                self._json({"error": "approved negotiation and offer required"}, 400)
+                return
+            result = check_offer(pending, body["offer"])
+            events = pending.get("negotiation_events") or []
+            events.append({"offer": body["offer"], "result": result,
+                           "at": datetime.now(timezone.utc).isoformat()})
+            patch_pending(negotiation_events=events[-30:])
+            self._json(result)
+            return
 
         if route == "/dial":
             pending = read_pending()
@@ -457,6 +513,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if not pending.get("dial_number"):
                 self._json({"error": "pending has no dial_number"}, 409)
+                return
+            if not private_inputs.current(pending):
+                self._json({"error": "private requirements changed; run /close for a new approval"}, 409)
+                return
+            if pending.get("negotiation") and pending.get("status") != "approved":
+                self._json({"error": "negotiation requires approval in the group"}, 409)
                 return
             # A second /dial on a finished or in-flight call re-armed it: a
             # new live message, a fresh empty transcript, and back when
@@ -525,6 +587,11 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/outcome":
             pending = read_pending()
             collected, source = collect_outcome(body)
+            fresh = read_pending()
+            if pending.get("negotiation") and (fresh.get("id") != pending.get("id") or fresh.get("status") != "dialing"):
+                self._json({"error": "call changed while collecting outcome"}, 409)
+                return
+            collected = validate_outcome(pending, collected)
             body["collected"] = collected
             body["outcome_source"] = source
 
@@ -561,6 +628,9 @@ class Handler(BaseHTTPRequestHandler):
             # this to an LLM, which makes the restriction load-bearing rather
             # than tidy.
             pending = read_pending()
+            if pending.get("negotiation"):
+                self._json({"error": "This call has approved negotiation limits. Change the plan in the group and run /close for a fresh approval."}, 409)
+                return
             if not pending or not pending.get("restaurant_name"):
                 self._json({"error": "nothing pending to amend"}, 409)
                 return

@@ -151,8 +151,62 @@ There is no auto-dial switch. There was one, and it worked; it was removed becau
 
 ## Setup
 
+### Private requirements and delegated negotiation
+
+This feature is implemented for the **Telegram dinner flow**. It reduces the
+organiser's work when a guest has a limit they do not want to announce to the
+group and the restaurant offers different terms on the call.
+
+1. In the group, send `/private`. Each participant opens the DM link. The bot
+   verifies Telegram group membership (it may need administrator rights to
+   inspect members). A participant sends `budget 150`, `time 19:00-20:00`, or
+   taps Vegetarian, Vegan, No pork, or Step-free, then **Save privately**.
+   The draft alone changes nothing. The DM explains who can receive combined
+   requirements and that an outcome may indirectly reveal a private limit.
+2. The group sends `/negotiate 19:00-20:00 budget 200`. These are **proposed**
+   same-day start times and an all-in HKD per-person maximum. Deposits are
+   never authorised. Private inputs silently narrow the delegation.
+3. Run `/decide`, vote, then `/close`. The approval card shows the public
+   delegation and states that private requirements also apply. A human
+   approves the call and dials on their phone as before.
+4. The ElevenLabs agent asks staff for a time, all-in price, deposit and
+   requirements. Its `evaluate_offer` client tool checks each offer in code.
+   The call desk displays each check. An offer outside the limits prompts one
+   counteroffer; missing facts prompt clarification. The tool's "accept" only
+   permits asking staff to hold those exact terms. Final reported terms must
+   match the checked offer before the group sees a confirmed booking.
+5. In a private-input plan the group receives a generic live status and final
+   booking result, without the call transcript or staff notes. The operator
+   and voice provider still see the combined requirements and local call log.
+
+`/private new` starts another outing and deletes the prior event's saved
+inputs. A participant can use **Forget my inputs** in the DM; saved inputs
+expire after 24 hours. A changed private input invalidates the old call
+approval. The call desk handles one approved call at a time.
+
+To provision the voice agent's prompt, eleven outcome fields and client tool:
+
 ```bash
-git clone <this repo> && cd convene
+python3 setup_agent.py --dry-run
+python3 setup_agent.py             # requires ELEVENLABS_API_KEY in .env
+python3 preflight.py
+```
+
+There is no `.env` in this repository and no live Telegram or ElevenLabs
+session was run as part of this feature's automated checks. The voice tool
+must be provisioned on the account and tried on a consenting role-play before
+presenting a live negotiated booking. The structured private fields affect
+call approval and venue verification; the discovery shortlist currently does
+not use them, because OSM listings do not reliably establish price, dietary
+accommodation or access. Do not describe a proposed listing as verified.
+
+The tool checks what the agent extracted from staff speech; it cannot prove
+transcription accuracy or physically prevent a voice model from speaking in
+error. The final outcome gate refuses to announce a mismatched confirmation,
+and the human operator can end the call.
+
+```bash
+git clone https://github.com/AikagraGupta/convene-gl-hacks.git && cd convene-gl-hacks
 cp .env.example .env      # then fill it in
 ```
 
@@ -162,7 +216,7 @@ Stdlib only. Nothing to install.
 1. `/newbot` → copy the token into `TELEGRAM_TOKEN`
 2. **`/setprivacy` → Disable.** Without this the bot cannot see group messages at all and nothing works.
 
-**ElevenLabs:** create an agent, set **authentication OFF** (otherwise connecting by plain `agentId` fails and you need signed URLs), and configure a data-collection schema with `status`, `confirmed_time`, `confirmed_party_size`, `wait_estimate_minutes`, `staff_notes`, `booking_name`. Without that schema you have a phone call; with it you have a state transition and the loop can close itself.
+**ElevenLabs:** create an agent, set **authentication OFF** (otherwise connecting by plain `agentId` fails and you need signed URLs), then use `setup_agent.py` to provision the prompt, client tool, and outcome schema from `docs/elevenlabs-agent.md`.
 
 **Build the offline safety net while you have working wifi:**
 ```bash

@@ -192,6 +192,7 @@ def check_cache() -> None:
 
 
 REQUIRED_SCHEMA_FIELDS = {
+    "price_per_person", "deposit_total", "currency", "same_day", "requirements_met",
     "status", "confirmed_time", "confirmed_party_size",
     "wait_estimate_minutes", "staff_notes", "booking_name",
 }
@@ -288,6 +289,9 @@ def check_elevenlabs() -> None:
 
     prompt = ((agent.get("conversation_config") or {}).get("agent") or {}).get("prompt") or {}
     prompt_text = str(prompt.get("prompt") or "")
+    if "{{negotiation_brief}}" not in prompt_text or not prompt.get("tool_ids"):
+        bad("elevenlabs", "negotiation prompt/tool not provisioned",
+            "run python3 setup_agent.py with ELEVENLABS_API_KEY to update the agent")
     if prompt_text:
         disclosed = any(term in prompt_text.lower()
                         for term in ("ai assistant", "an ai", "automated assistant"))

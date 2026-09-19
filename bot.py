@@ -42,6 +42,9 @@ import exa_search
 import people
 import places
 import pipeline
+import negotiation
+import private_chat
+import private_inputs
 from envlite import env, env_flag, env_list, load_env, warn_if_tls_broken
 from tgtext import esc, esc_join
 
@@ -122,6 +125,8 @@ class ChatState:
         # could simply ask about; this is the bot holding the thread instead.
         self.awaiting: dict | None = None
         self.pending_winner: dict | None = None
+        self.private_plan: str | None = None
+        self.negotiation_limits: dict = {}
 
     def add(self, author: str, text: str) -> None:
         """Store one message, splitting multi-line into separate history lines.
@@ -174,6 +179,8 @@ def save_state() -> None:
                 "approval_payload": st.approval_payload,
                 "awaiting": st.awaiting,
                 "pending_winner": st.pending_winner,
+                "private_plan": st.private_plan,
+                "negotiation_limits": st.negotiation_limits,
             }
             for chat_id, st in STATE.items()
         }
@@ -216,6 +223,8 @@ def load_state() -> int:
         st.approval_payload = data.get("approval_payload")
         st.awaiting = data.get("awaiting")
         st.pending_winner = data.get("pending_winner")
+        st.private_plan = data.get("private_plan")
+        st.negotiation_limits = data.get("negotiation_limits") or {}
         restored += len(st.history)
     return restored
 
@@ -529,6 +538,12 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
 
     state.awaiting = None
     hard_list = [h["constraint"] for h in state.constraints.get("hard", []) if h.get("constraint")]
+    try:
+        private = private_inputs.snapshot(state.private_plan)
+        policy = negotiation.build(when_text, party, state.negotiation_limits, private, hard_list)
+    except ValueError as error:
+        tg.send(chat_id, esc(str(error)))
+        return
     dial_number, demo_override, refusal = resolve_dial_target(winner.get("phone"))
 
     if refusal:
@@ -562,6 +577,12 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
         "vote_tally": tally,
         "dial": False,
         "status": "awaiting_approval",
+        "negotiation": policy,
+        "negotiation_brief": negotiation.brief(policy),
+        "private_plan": state.private_plan,
+        "private_revision": private["revision"],
+        "private_mode": bool(private["inputs"]),
+        "negotiation_events": [],
     }
 
     card = [
@@ -575,6 +596,15 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
     ]
     if hard_list:
         card.append(f"• Mentioning: {esc_join(hard_list[:3])}")
+    if state.negotiation_limits:
+        limits = state.negotiation_limits
+        card.append(f"• May negotiate: {negotiation.clock(limits['start'])}–{negotiation.clock(limits['end'])}, "
+                    f"up to HK${limits['budget']:g}/person including charges. No deposits.")
+    else:
+        card.append("• No time flexibility or spending authority set. Use /negotiate 19:00-20:00 budget 200 to delegate it.")
+    if private["inputs"]:
+        card.append("• Saved private requirements also apply. Identities, private limits and the call transcript will not be posted to this group.")
+    card.append("• This approves the displayed negotiation limits for the call. Staff must still confirm a matching offer.")
     card.append("")
     if demo_override:
         card.append(
@@ -638,15 +668,26 @@ def handle_callback(tg: Telegram, query: dict) -> None:
         state.awaiting = None
         state.pending_winner = None
         save_state()
-        PENDING_PATH.parent.mkdir(parents=True, exist_ok=True)
-        PENDING_PATH.write_text(json.dumps({"status": "cancelled"}, indent=2), encoding="utf-8")
-        tg.send(chat_id, f"❌ {esc(who)} cancelled. Nothing was dialled.")
+        # Cancelling a proposal must not overwrite a different approved call.
+        tg.send(chat_id, f"❌ {esc(who)} cancelled this proposal. Nothing was dialled from this card.")
         return
 
     if action != "ok":
         return
 
     payload = dict(state.approval_payload or {})
+    if not private_inputs.current(payload):
+        tg.call("answerCallbackQuery", callback_query_id=query["id"], text="Private requirements changed. Run /close again.", show_alert=True)
+        return
+    # The call desk is single-call. Never replace another live group's call.
+    if PENDING_PATH.exists():
+        try:
+            active = json.loads(PENDING_PATH.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            active = {"status": "dialing"}
+        if active.get("status") in ("approved", "dialing"):
+            tg.call("answerCallbackQuery", callback_query_id=query["id"], text="Call desk busy. Finish or cancel the current call first.", show_alert=True)
+            return
     payload["approved_by"] = who
     payload["approved_at"] = datetime.now(timezone.utc).isoformat()
     payload["status"] = "approved"
@@ -659,9 +700,10 @@ def handle_callback(tg: Telegram, query: dict) -> None:
     state.approval_token = None
 
     if notify_bridge_dial():
+        reporting = "Only the booking result will be shared here." if payload.get("private_mode") else "I'll post the transcript here."
         tg.send(chat_id,
-                f"✅ {esc(who)} approved it. The call desk is dialling "
-                f"<code>{esc(payload['dial_number'])}</code> now — I'll post the transcript here.")
+                f"✅ {esc(who)} approved it. Dial <code>{esc(payload['dial_number'])}</code> on your phone and put it on speaker. "
+                f"The call desk is ready. {reporting}")
     else:
         payload["dial"] = True
         PENDING_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -684,6 +726,8 @@ HELP = (
     "with a voice agent and book it.\n\n"
     "/decide — read the chat and propose three\n"
     "/close — close the poll, pick the winner, ask to call\n"
+    "/private — private requirements; /private new starts a new outing\n"
+    "/negotiate 19:00-20:00 budget 200 — propose call limits (HKD/person, no deposit)\n"
     "/status — what I've read and what I know\n"
     "/who — every preference I remember, with the quote it came from\n"
     "/forget NAME — drop someone; /forget all wipes it\n\n"
@@ -695,6 +739,10 @@ def handle_message(tg: Telegram, message: dict) -> None:
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
     if chat_id is None:
+        return
+    # Private messages never reach group history, extraction, memory, or logs.
+    if chat.get("type") == "private":
+        private_chat.handle(tg, message)
         return
     state = state_for(chat_id)
     author = (message.get("from") or {}).get("first_name") or "someone"
@@ -715,6 +763,38 @@ def handle_message(tg: Telegram, message: dict) -> None:
     verb = command.group(1).lower()
     if verb in ("start", "help"):
         tg.send(chat_id, HELP)
+    elif verb == "private":
+        if text.split(maxsplit=1)[-1].lower() == "new" and state.private_plan:
+            private_inputs.retire(state.private_plan)
+            state.private_plan = None
+            state.approval_token = None
+            state.approval_payload = None
+            state.negotiation_limits = {}
+        if not state.private_plan or not private_inputs.plan(state.private_plan):
+            state.private_plan = private_inputs.create(chat_id, chat.get("title") or "Group outing")
+            save_state()
+        me = tg.call("getMe") or {}
+        username = me.get("username")
+        if not username:
+            tg.send(chat_id, "Could not fetch the bot's username. Try /private again.")
+            return
+        link = f"https://t.me/{username}?start=private_{state.private_plan}"
+        tg.send(chat_id, "<b>Some things are easier to say privately.</b>\nSet a budget, acceptable start time, or requirement in a DM. "
+                "Save there to apply it to this outing. These are verified during the venue call, not assumed from a listing.",
+                reply_markup={"inline_keyboard": [[{"text": "Set my private requirements", "url": link}]]})
+    elif verb == "negotiate":
+        try:
+            args = text.split(maxsplit=1)[1] if " " in text else ""
+            state.negotiation_limits = negotiation.parse_command(args)
+            state.approval_token = None
+            state.approval_payload = None
+            save_state()
+            limits = state.negotiation_limits
+            tg.send(chat_id, f"<b>Proposed delegation</b>\n{negotiation.clock(limits['start'])}–{negotiation.clock(limits['end'])}, "
+                    f"up to HK${limits['budget']:g}/person including all charges. No deposits.\n"
+                    "Private requirements can narrow these limits. Run /close to review and approve the call with these terms.")
+        except ValueError as error:
+            tg.send(chat_id, esc(str(error)))
     elif verb == "decide":
         handle_decide(tg, chat_id, state)
     elif verb == "close":
@@ -841,6 +921,8 @@ def drain_backlog(tg: Telegram) -> int | None:
         for update in batch:
             offset = update["update_id"] + 1
             message = update.get("message")
+            if message and (message.get("chat") or {}).get("type") == "private":
+                continue  # Never import a queued DM into the shared memory pipeline.
             if message and (message.get("text") or "") and not message["text"].strip().startswith("/"):
                 chat_id = (message.get("chat") or {}).get("id")
                 if chat_id is not None:

@@ -489,6 +489,7 @@ def run() -> Suite:
             bool(bridge_calls))
 
     # The bridge being down must be handled, not silently swallowed.
+    TMP_PENDING.write_text(json.dumps({"status": "done"}))  # previous call has finished
     bot.notify_bridge_dial = lambda: False
     st = seeded_state(None)
     st.constraints = {"party_size": 6, "when_text": "Friday 8pm", "hard": []}
@@ -517,7 +518,7 @@ def run() -> Suite:
     tg = FakeTelegram()
     bot.handle_callback(tg, {"id": "cb", "data": f"no:{st.approval_token}",
                              "from": {"first_name": "Priya"}, "message": {"chat": {"id": -100}}})
-    s.eq("cancelling clears the pending call", json.loads(TMP_PENDING.read_text())["status"], "cancelled")
+    s.eq("cancelling a new proposal preserves the previous approved call", json.loads(TMP_PENDING.read_text())["status"], "approved")
     s.contains("and says nothing was dialled", tg.sent_text(), "Nothing was dialled")
 
     # --- the booking card must survive a real restaurant name ------------
