@@ -336,7 +336,8 @@ def run() -> Suite:
     s.check("the bot asks for the whole pool",
             "search_places(areas=wanted_areas, limit=None)" in BOT_SRC)
     s.check("...and cuts only after ranking",
-            ", constraints\n        )[:60]" in BOT_SRC)
+            (", constraints\n        )[:60]" in BOT_SRC
+             or ", constraints\n            )[:60]" in BOT_SRC))
 
     # --- dialling is a human's job, permanently ---------------------------
     #

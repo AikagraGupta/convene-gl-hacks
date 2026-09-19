@@ -110,6 +110,10 @@ def run() -> Suite:
     demo = bot.demo_constraints()
     s.eq("demo fixes the party at three", demo["party_size"], 3)
     s.eq("demo fixes dinner next Saturday at seven", demo["when_text"], "7 pm next Saturday")
+    s.eq("demo fixes the hotpot cuisine", demo["prefer_cuisines"], ["hotpot"])
+    s.eq("demo has three preselected options",
+         [pick["name"] for pick in bot.DEMO_PICKS],
+         ["Twelve Flavors", "Megan's Kitchen", "Giant Seafood Hot Pot"])
     s.eq("demo includes all three travel origins",
          [(x["who"], x["place"]) for x in demo["coming_from"]],
          [("Kai", "Sha Tin"), ("Ethan", "Kennedy Town"), ("Jenny", "Sheung Shui")])
@@ -124,7 +128,7 @@ def run() -> Suite:
     demo_state = bot.state_for(-777)
     s.check("/demo enables the fixed rehearsal mode", demo_state.demo_mode)
     s.eq("/demo seeds three speaker messages", len(demo_state.history), 3)
-    s.contains("/demo confirmation names the dinner", demo_tg.sent_text(), "Dinner next Saturday")
+    s.contains("/demo confirmation names the hotpot dinner", demo_tg.sent_text(), "Hotpot dinner next Saturday")
     bot.STATE.clear()
     os.environ["DEMO_MODE"] = "1"
     decide_tg = FakeTelegram()
@@ -139,6 +143,18 @@ def run() -> Suite:
     s.check("demo mode makes a plain /decide load the rehearsal", decide_state.demo_mode)
     s.eq("plain /decide gets the three demo lines", len(decide_state.history), 3)
     bot.STATE.clear()
+
+    bot.PEOPLE = {}
+    instant = bot.ChatState()
+    instant.demo_mode = True
+    for author, text in bot.DEMO_HISTORY:
+        instant.add(author, text)
+    instant_tg = FakeTelegram({"sendPoll": {"poll": {"id": "demo-poll"}, "message_id": 12}})
+    bot.handle_decide(instant_tg, -779, instant)
+    s.contains("demo options appear without live search", instant_tg.sent_text(), "Twelve Flavors")
+    s.eq("demo poll starts with Twelve Flavors", instant.poll_options[0], "Twelve Flavors")
+    s.eq("demo keeps exactly three restaurant choices", instant.poll_options[:3],
+         ["Twelve Flavors", "Megan's Kitchen", "Giant Seafood Hot Pot"])
 
     big = bot.ChatState()
     for i in range(250):

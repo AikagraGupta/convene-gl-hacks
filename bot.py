@@ -64,9 +64,30 @@ NONE_OPTION = "None of these — keep arguing"
 # A deterministic rehearsal scene for tomorrow's demo. It is opt-in through
 # /demo, so ordinary groups continue to use the messages they actually sent.
 DEMO_HISTORY = (
-    ("Kai", "Let's book dinner next Saturday at 7 pm. I'm coming from Sha Tin."),
+    ("Kai", "Let's book hotpot for dinner next Saturday at 7 pm. I'm coming from Sha Tin."),
     ("Ethan", "I'm coming from Kennedy Town."),
     ("Jenny", "I'm coming from Sheung Shui."),
+)
+
+DEMO_PICKS = (
+    {
+        "name": "Twelve Flavors", "area": "North Point", "phone": "+85295607594",
+        "cuisine": "hotpot, Chinese",
+        "why": "Sichuan hotpot with a strong central option for the three travel routes.",
+        "satisfies": ["hotpot", "dialable"], "fails": [], "source": "osm",
+    },
+    {
+        "name": "Megan's Kitchen", "area": "Wan Chai", "phone": "+85228668305",
+        "cuisine": "hotpot, Chinese, Cantonese, seafood",
+        "why": "A callable hotpot alternative on Hong Kong Island.",
+        "satisfies": ["hotpot", "dialable"], "fails": [], "source": "osm",
+    },
+    {
+        "name": "Giant Seafood Hot Pot", "area": "Jordan", "phone": "+85257028160",
+        "cuisine": "hotpot, seafood",
+        "why": "A third hotpot option with a different menu direction.",
+        "satisfies": ["hotpot", "dialable"], "fails": [], "source": "demo",
+    },
 )
 
 
@@ -85,10 +106,11 @@ def demo_constraints() -> dict:
             {"who": "Ethan", "place": "Kennedy Town"},
             {"who": "Jenny", "place": "Sheung Shui"},
         ],
-        "prefer_cuisines": [],
+        "prefer_cuisines": ["hotpot"],
         "avoid_cuisines": [],
         "open_questions": [],
-        "summary_line": "3 people · dinner next Saturday at 7 pm",
+        "summary_line": "3 people · hotpot dinner next Saturday at 7 pm",
+        "notes": "hotpot dinner",
     }
 
 
@@ -445,21 +467,27 @@ def handle_decide(tg: Telegram, chat_id: int, state: ChatState) -> None:
                     seen_origins.add(area.lower())
 
         wanted_areas = places.areas_for(constraints)
-        # Whole pool, then rank by the chat's districts, THEN cut. The other
-        # order silently discarded the rows the chat had asked for: the cache
-        # is territory-wide and constraint-blind, so a 60-row cut taken before
-        # relevance_rank left 1 of 15 Sha Tin rows alive -- indistinguishable
-        # from "there are no restaurants near Sha Tin".
-        osm_rows = places.search_places(areas=wanted_areas, limit=None)
-        # The area pool can miss a cuisine almost entirely; add a
-        # territory-wide search for whatever the group is craving.
-        cuisine_rows = places.search_cuisine(constraints)
-        if cuisine_rows:
-            osm_rows = places.dedupe_and_rank(osm_rows + cuisine_rows)
-        exa_rows = exa_search.search(constraints)
-        candidates = places.relevance_rank(
-            exa_search.merge(osm_rows, exa_rows), constraints
-        )[:60]
+        if state.demo_mode:
+            # The stage demo must be instant and repeatable. These are the
+            # three already chosen hotpot options; the configured demo phone
+            # still routes every approval to the operator's handset.
+            candidates = list(DEMO_PICKS)
+        else:
+            # Whole pool, then rank by the chat's districts, THEN cut. The other
+            # order silently discarded the rows the chat had asked for: the cache
+            # is territory-wide and constraint-blind, so a 60-row cut taken before
+            # relevance_rank left 1 of 15 Sha Tin rows alive -- indistinguishable
+            # from "there are no restaurants near Sha Tin".
+            osm_rows = places.search_places(areas=wanted_areas, limit=None)
+            # The area pool can miss a cuisine almost entirely; add a
+            # territory-wide search for whatever the group is craving.
+            cuisine_rows = places.search_cuisine(constraints)
+            if cuisine_rows:
+                osm_rows = places.dedupe_and_rank(osm_rows + cuisine_rows)
+            exa_rows = exa_search.search(constraints)
+            candidates = places.relevance_rank(
+                exa_search.merge(osm_rows, exa_rows), constraints
+            )[:60]
         origins = places.origin_districts(constraints)
         destinations = places.destination_districts(constraints)
         fair = places.meeting_districts(origins)[:3] if origins and not destinations else []
@@ -470,7 +498,12 @@ def handle_decide(tg: Telegram, chat_id: int, state: ChatState) -> None:
             tg.send(chat_id, "I couldn't find any candidate restaurants at all. Search layers are all down.")
             return
 
-        proposal = pipeline.propose(constraints, candidates)
+        proposal = (
+            {"picks": list(DEMO_PICKS),
+             "tradeoff_line": "Three preselected hotpot options, ready to vote.",
+             "source": "gemini"}
+            if state.demo_mode else pipeline.propose(constraints, candidates)
+        )
         picks = [p for p in proposal.get("picks", []) if p.get("name")][:3]
         if not picks:
             tg.send(chat_id, "I found places but couldn't narrow them to three. Try /decide again.")
@@ -961,7 +994,7 @@ def handle_message(tg: Telegram, message: dict) -> None:
         tg.send(
             chat_id,
             "<b>Tomorrow's demo plan loaded.</b>\n"
-            "Dinner next Saturday at 7:00 PM · 3 people\n"
+            "Hotpot dinner next Saturday at 7:00 PM · 3 people\n"
             "Kai: Sha Tin · Ethan: Kennedy Town · Jenny: Sheung Shui\n\n"
             "Finding three places now…",
         )
