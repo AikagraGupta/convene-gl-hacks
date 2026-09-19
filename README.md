@@ -192,10 +192,9 @@ group and the restaurant offers different terms on the call.
    counteroffer; missing facts prompt clarification. The tool's "accept" only
    permits asking staff to hold those exact terms. Final reported terms must
    match the checked offer before the group sees a confirmed booking.
-5. For public calls the group receives the complete transcript after the call,
-   whether or not a table was booked. In a private-input plan the group receives
-   a generic live status and final booking result, without the call transcript
-   or staff notes. The operator
+5. The group receives the complete transcript after every call, whether or not
+   a table was booked. Private identities and limits stay out of the approval
+   card; staff notes remain out of the structured result. The operator
    and voice provider still see the combined requirements and local call log.
 
 `/private new` starts another outing and deletes the prior event's saved

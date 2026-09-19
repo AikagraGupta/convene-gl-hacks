@@ -162,9 +162,7 @@ def transcript_messages(pending: dict, turns: list[dict]) -> list[str]:
 
 
 def post_transcript(pending: dict, turns: list[dict]) -> bool:
-    """Public calls get a permanent transcript even when no booking was made."""
-    if pending.get("private_mode"):
-        return False  # private inputs can surface in speech; retain the local archive
+    """Every call gets a permanent Telegram transcript, whatever the outcome."""
     delivered = True
     for message in transcript_messages(pending, turns):
         delivered = send_telegram(pending.get("chat_id"), message) and delivered
@@ -285,9 +283,6 @@ def render_live(pending: dict, turns: list[dict], finished: bool = False) -> str
     the moment a human can say "no, that's wrong" while it still matters.
     """
     name = pending.get("restaurant_display") or pending.get("restaurant_name") or "the restaurant"
-    if pending.get("private_mode"):
-        return (f"<b>{'Call finished' if finished else 'Checking with the venue'} — {esc(name)}</b>\n"
-                "Private requirements are being checked. The transcript stays on the operator's call desk; only the booking result is shared here.")
     if finished:
         return f"✅ <b>Call finished — {esc(name)}</b>\nFull transcript posted separately below."
     head = f"\U0001f4de <b>On the phone with {esc(name)}\u2026</b>"
@@ -508,15 +503,55 @@ def archive_call(pending: dict, body: dict) -> Path:
     return path
 
 
+def vapi_offer_note(pending: dict, turns: list[dict]) -> str:
+    """Explain a clear hold offer when it does not match the approval."""
+    venue_speech = " ".join(
+        str(turn.get("message") or "") for turn in turns
+        if turn.get("source") == "user"
+    )
+    if not venue_speech:
+        return ""
+    # This is deliberately a narrow explanation helper, not a booking parser.
+    # The approval gate remains the authority; this only makes a rejected offer
+    # intelligible to the group.
+    hold = re.search(
+        r"\b(?:book|books|booking|reserve|reserved|reservation|hold|holds|held|keep|save)\b|留|预订|預訂",
+        venue_speech, re.I,
+    )
+    if not hold:
+        return ""
+    offered_sizes = []
+    for first, second in re.findall(
+        r"\b(\d{1,2})\s*(?:people?|persons?|pax|seats?)\b|\b(\d{1,2})\s*[个位]",
+        venue_speech, re.I,
+    ):
+        offered_sizes.append(int(first or second))
+    requested = pending.get("party_size")
+    try:
+        requested = int(requested)
+    except (TypeError, ValueError):
+        requested = None
+    offered = offered_sizes[-1] if offered_sizes else None
+    if requested is not None and offered is not None and requested != offered:
+        return (f"The venue offered to hold {offered} people, but the approved "
+                f"request was for {requested}. This is not a valid reservation "
+                "for the approved party.")
+    return ("The venue said it could hold the requested table, but this inquiry "
+            "did not independently verify a booking.")
+
+
 def format_vapi_result(pending: dict, turns: list[dict]) -> str:
     """Report a real phone inquiry without presenting it as a reservation."""
     name = pending.get("restaurant_display") or pending.get("restaurant_name") or "the venue"
     lines = [f"☎️ <b>Inquiry finished — {esc(name)}</b>"]
     if not any(turn.get("source") == "user" for turn in turns):
         lines.append("No response from venue staff was recorded.")
+    note = vapi_offer_note(pending, turns)
+    if note:
+        lines.append(note)
     lines.append("<b>No reservation is verified in Convene.</b> Review the call and confirm with the venue before making plans.")
     if pending.get("private_mode"):
-        lines.append("The transcript stays on the operator's call desk because private requirements were used.")
+        lines.append("The full transcript is posted below, including calls that use private requirements.")
     if pending.get("demo_override"):
         lines.append("<i>Demo call: the number that rang belongs to the team, not the listed venue.</i>")
     return "\n".join(lines)

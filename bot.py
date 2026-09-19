@@ -618,7 +618,7 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
     else:
         card.append("• No time flexibility or spending authority set. Use /negotiate 19:00-20:00 budget 200 to delegate it.")
     if private["inputs"]:
-        card.append("• Saved private requirements also apply. Identities, private limits and the call transcript will not be posted to this group.")
+        card.append("• Saved private requirements also apply. Identities and private limits stay protected; the call transcript will be posted to this group.")
     if state.approval_payload["call_provider"] == "vapi":
         card.append("• Vapi will ask about availability and any deposit, not menu prices. It will not make or claim a reservation in this version.")
     else:
@@ -734,12 +734,12 @@ def handle_callback(tg: Telegram, query: dict) -> None:
 
     started, reason = notify_bridge_dial()
     if started:
-        reporting = "Only the booking result will be shared here." if payload.get("private_mode") else "I'll post the transcript here."
+        reporting = "I'll post the call transcript here."
         if payload.get("call_provider") == "vapi":
             tg.send(chat_id,
                     f"✅ {esc(who)} approved it. Vapi is calling <code>{esc(payload['dial_number'])}</code> now. "
                     "This is an availability inquiry; no reservation will be claimed. "
-                    + ("Only the result will be shared here." if payload.get("private_mode") else "The call transcript will appear here."))
+                    + "The call transcript will appear here.")
         else:
             tg.send(chat_id,
                     f"✅ {esc(who)} approved it. Dial <code>{esc(payload['dial_number'])}</code> on your phone and put it on speaker. "

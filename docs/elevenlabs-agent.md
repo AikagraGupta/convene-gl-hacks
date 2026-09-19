@@ -122,5 +122,6 @@ result is marked as needing approval. Test on a consenting role-play before use.
 
 Private requirements are merged without names into `negotiation_brief`. The
 local operator, voice provider and venue can receive these effective requirements
-after the participant explicitly saves them. The group does not receive the
-raw transcript or staff notes when private inputs are used.
+after the participant explicitly saves them. The group receives the raw call
+transcript, while private identities, limits and staff notes stay out of the
+structured result.

@@ -102,6 +102,14 @@ def run() -> Suite:
             s.eq("only one outbound call was requested", create.call_count, 1)
         s.contains("Vapi result does not claim a booking", server.format_vapi_result(pending, []),
                    "No reservation is verified")
+        mismatch_turns = [
+            {"source": "user", "message": "We can hold 5 seats and book 5 people."},
+        ]
+        mismatch_text = server.format_vapi_result(pending, mismatch_turns)
+        s.contains("Vapi explains a smaller hold offer", mismatch_text,
+                   "offered to hold 5 people")
+        s.contains("Vapi explains why the offer was rejected", mismatch_text,
+                   "approved request was for 6")
         # A completed Vapi call must actually close the Telegram live message
         # and send a result. Vapi's real artifacts label agent turns "bot".
         ended = {"status": "ended", "endedReason": "customer-ended-call", "artifact": {
@@ -130,9 +138,9 @@ def run() -> Suite:
             server.write_pending({**pending, "status": "vapi_calling", "vapi_call_id": "call-2",
                                   "live_message_id": 6, "private_mode": True, "live_turns": []})
             server.monitor_vapi_call("call-2")
-            s.check("private transcript stays out of Telegram",
-                    "We have a table" not in str(edit.call_args_list)
-                    and "We have a table" not in str(send.call_args_list))
+            s.check("private call transcript is visible in Telegram",
+                    "We have a table" in str(edit.call_args_list)
+                    and "We have a table" in str(send.call_args_list))
         long_turns = [{"source": "user", "message": "R&B <test> " * 900}]
         chunks = server.transcript_messages(pending, long_turns)
         s.check("long transcript is split within Telegram limits",

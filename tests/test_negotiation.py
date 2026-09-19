@@ -98,7 +98,7 @@ def run():
             s.eq("changed private input also blocks final confirmation", server.validate_outcome(pending, collected)["status"], "needs_approval")
             private_text = "Sensitive private budget explanation"
             live = server.render_live(pending, [{"source": "user", "message": private_text}])
-            s.check("private-mode group transcript contains no spoken details", private_text not in live)
+            s.check("private-mode group transcript remains visible", private_text in live)
             report = server.format_outcome(pending, {"collected": {**collected, "staff_notes": private_text}})
             s.check("private staff notes do not leak through result or calendar", private_text not in report and "Sensitive+private" not in report)
             server.write_pending({**pending, "status": "done"})
