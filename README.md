@@ -20,17 +20,12 @@ make.
 
 ---
 
-## Provenance
+## About this project
 
-This project began as **Shum-AI**, built by Aikagra Gupta, Prakhar Khandelwal
-and Akshay Thanipet Padmanabhan at the AI Tinkerers *Agents, Everywhere* global
-hackathon, Hong Kong site, Cyberport, 12 September 2026. The original repository
-is <https://github.com/khandelwalprakhar123-star/Shum-AI>, and the MIT licence
-and copyright notice from it are carried forward unchanged in `LICENSE`.
-
-*Shumai* (燒賣) was the dumpling nobody argues about at a dim sum table — a good
-joke for a restaurant bot, and the wrong name for something that also books
-badminton courts. Hence `convene`.
+This is a standalone project for helping groups turn a messy conversation into
+a concrete, approved plan. It reads the discussion, surfaces constraints with
+their supporting quotes, proposes options, closes the decision with a poll, and
+can call a venue after a human approves the exact request.
 
 **What is different here:** the venue category is no longer hard-coded.
 `domains.py` describes what is being booked — restaurant, party room, court,
