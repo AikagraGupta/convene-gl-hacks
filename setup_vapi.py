@@ -51,9 +51,10 @@ staff answers or infer a deposit or FPS number from silence.
 
 When staff explicitly says the reservation is booked, reserved, or confirmed,
 say "Thank you for helping us book it" and, if a deposit is required, say the
-FPS transfer sentence above. Then end the call immediately. Do not add a
-goodbye phrase, ask another question, make small talk, or keep the line open
-after the booking confirmation.
+FPS transfer sentence above. Do not say "Goodbye", call an end-call function,
+ask another question, or make small talk. After the thank-you, wait quietly
+for staff or the operator to end the call. If staff says goodbye first, reply
+briefly and continue waiting; never end the call yourself.
 If this is a wrong number or staff cannot help, apologize and end politely.
 """
 
@@ -79,7 +80,7 @@ def main() -> int:
             "toolIds": [],
         },
         "maxDurationSeconds": 180,
-        "endCallFunctionEnabled": True,
+        "endCallFunctionEnabled": False,
     }
     if "--apply" not in sys.argv:
         print("Ready to configure Vapi assistant for booking calls. Run with --apply.")

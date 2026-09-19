@@ -80,10 +80,10 @@ def run() -> Suite:
                    "whether a deposit is")
         s.contains("agent asks for an FPS number when needed", setup_vapi.SYSTEM_PROMPT,
                    "FPS payment number")
-        s.contains("agent ends after a booking confirmation", setup_vapi.SYSTEM_PROMPT,
-                   "end the call immediately")
-        s.contains("agent thanks staff without a goodbye loop", setup_vapi.SYSTEM_PROMPT,
-                   "goodbye phrase")
+        s.contains("agent waits after a booking confirmation", setup_vapi.SYSTEM_PROMPT,
+                   "wait quietly")
+        s.contains("agent does not say goodbye or end the call", setup_vapi.SYSTEM_PROMPT,
+                   'Do not say "Goodbye"')
         s.contains("agent does not ask for a meal price", setup_vapi.SYSTEM_PROMPT,
                    "Do not ask for a price")
         s.contains("demo opener discloses the AI and sounds conversational",
