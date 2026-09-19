@@ -517,43 +517,6 @@ def archive_call(pending: dict, body: dict) -> Path:
     return path
 
 
-def vapi_offer_note(pending: dict, turns: list[dict]) -> str:
-    """Explain a clear hold offer when it does not match the approval."""
-    venue_speech = " ".join(
-        str(turn.get("message") or "") for turn in turns
-        if turn.get("source") == "user"
-    )
-    if not venue_speech:
-        return ""
-    # This is deliberately a narrow explanation helper, not a booking parser.
-    # The approval gate remains the authority; this only makes a rejected offer
-    # intelligible to the group.
-    hold = re.search(
-        r"\b(?:book|books|booking|reserve|reserved|reservation|hold|holds|held|keep|save)\b|留|预订|預訂",
-        venue_speech, re.I,
-    )
-    if not hold:
-        return ""
-    offered_sizes = []
-    for first, second in re.findall(
-        r"\b(\d{1,2})\s*(?:people?|persons?|pax|seats?)\b|\b(\d{1,2})\s*[个位]",
-        venue_speech, re.I,
-    ):
-        offered_sizes.append(int(first or second))
-    requested = pending.get("party_size")
-    try:
-        requested = int(requested)
-    except (TypeError, ValueError):
-        requested = None
-    offered = offered_sizes[-1] if offered_sizes else None
-    if requested is not None and offered is not None and requested != offered:
-        return (f"The venue offered to hold {offered} people, but the approved "
-                f"request was for {requested}. This is not a valid reservation "
-                "for the approved party.")
-    return ("The venue said it could hold the requested table, but RainCheck "
-            "did not receive an explicit booking confirmation.")
-
-
 def _venue_speech(turns: list[dict]) -> str:
     return " ".join(
         str(turn.get("message") or "") for turn in turns
@@ -680,11 +643,6 @@ def vapi_booking_details(pending: dict, turns: list[dict]) -> dict:
         "same_day": True,
         "requirements_met": True if not (pending.get("negotiation") or {}).get("requirements") else None,
     }
-
-
-def vapi_calendar_candidate(pending: dict, turns: list[dict]) -> dict | None:
-    details = vapi_booking_details(pending, turns)
-    return details if details.get("status") in ("confirmed", "booked") else None
 
 
 def format_vapi_result(pending: dict, turns: list[dict]) -> str:
