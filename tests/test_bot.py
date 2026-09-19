@@ -236,6 +236,8 @@ def run() -> Suite:
     st = bot.state_for(-100)
     for i in range(6):
         st.add("Marcus", f"line {i}")
+    st.poll_id = "old-poll"
+    st.poll_message_id = 99
     import pipeline as pl
     import places as pls
     import exa_search as ex
@@ -252,8 +254,10 @@ def run() -> Suite:
     pls.search_places = lambda *a, **k: [{"name": "A Place", "phone": "+85228033960"}]
     ex.search = lambda *a, **k: []
     try:
-        tg = FakeTelegram({"sendPoll": {"message_id": 55, "poll": {"id": "poll-xyz"}}})
+        tg = FakeTelegram({"stopPoll": {"options": []},
+                           "sendPoll": {"message_id": 55, "poll": {"id": "poll-xyz"}}})
         bot.handle_decide(tg, -100, st)
+        s.contains("rerunning decide closes the obsolete poll", tg.methods(), "stopPoll")
         poll = tg.find("sendPoll")
         s.check("a poll is posted", poll is not None)
         # is_anonymous MUST be false, or no poll_answer updates arrive at all

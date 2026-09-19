@@ -291,6 +291,16 @@ def handle_decide(tg: Telegram, chat_id: int, state: ChatState) -> None:
         )
         return
 
+    # A second /decide replaces the old choice set. Close its Telegram poll so
+    # people cannot keep voting on recommendations from stale constraints.
+    if state.poll_message_id:
+        tg.call("stopPoll", chat_id=chat_id, message_id=state.poll_message_id)
+        state.poll_id = None
+        state.poll_message_id = None
+        state.votes = {}
+        state.voter_names = {}
+        save_state()
+
     state.deciding = True
     try:
         tg.send(chat_id, f"Reading the last <b>{len(state.history)}</b> lines…")
