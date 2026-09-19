@@ -326,7 +326,7 @@ def check_vapi() -> None:
         bad("vapi", str(exc), "set VAPI_PHONE_NUMBER_ID to the imported Twilio number ID, then run python setup_vapi.py --apply")
         return
     ok("vapi", f"active {phone.get('provider')} number {phone.get('number')} and Convene assistant {agent.get('name')}")
-    warn("vapi", "outbound route to Hong Kong is not proven until a consented test call completes")
+    warn("vapi", "preflight cannot place a call; verify outbound routing with a consented demo call")
 
 
 def check_safety() -> None:
