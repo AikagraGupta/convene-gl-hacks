@@ -61,6 +61,36 @@ API_TIMEOUT = 40
 HISTORY_LIMIT = 200
 NONE_OPTION = "None of these — keep arguing"
 
+# A deterministic rehearsal scene for tomorrow's demo. It is opt-in through
+# /demo, so ordinary groups continue to use the messages they actually sent.
+DEMO_HISTORY = (
+    ("Kai", "Let's book dinner next Saturday at 7 pm. I'm coming from Sha Tin."),
+    ("Ethan", "I'm coming from Kennedy Town."),
+    ("Jenny", "I'm coming from Sheung Shui."),
+)
+
+
+def demo_constraints() -> dict:
+    """Return the fixed three-person dinner facts used by /demo."""
+    return {
+        "source": "demo",
+        "party_size": 3,
+        "when_text": "7 pm next Saturday",
+        "budget_per_head_hkd": None,
+        "hard": [],
+        "soft": [],
+        "vetoed": [],
+        "coming_from": [
+            {"who": "Kai", "place": "Sha Tin"},
+            {"who": "Ethan", "place": "Kennedy Town"},
+            {"who": "Jenny", "place": "Sheung Shui"},
+        ],
+        "prefer_cuisines": [],
+        "avoid_cuisines": [],
+        "open_questions": [],
+        "summary_line": "3 people · dinner next Saturday at 7 pm",
+    }
+
 
 # ===========================================================================
 # Telegram transport
@@ -128,6 +158,7 @@ class ChatState:
         self.pending_winner: dict | None = None
         self.private_plan: str | None = None
         self.negotiation_limits: dict = {}
+        self.demo_mode = False
 
     def add(self, author: str, text: str) -> None:
         """Store one message, splitting multi-line into separate history lines.
@@ -176,6 +207,7 @@ def reset_outing(state: ChatState, tg: Telegram | None = None, chat_id: int | No
     state.awaiting = None
     state.pending_winner = None
     state.negotiation_limits = {}
+    state.demo_mode = False
 
 
 def forget_chat(state: ChatState, tg: Telegram, chat_id: int) -> str:
@@ -221,6 +253,7 @@ def save_state() -> None:
                 "pending_winner": st.pending_winner,
                 "private_plan": st.private_plan,
                 "negotiation_limits": st.negotiation_limits,
+                "demo_mode": st.demo_mode,
             }
             for chat_id, st in STATE.items()
         }
@@ -265,6 +298,7 @@ def load_state() -> int:
         st.pending_winner = data.get("pending_winner")
         st.private_plan = data.get("private_plan")
         st.negotiation_limits = data.get("negotiation_limits") or {}
+        st.demo_mode = bool(data.get("demo_mode"))
         restored += len(st.history)
     return restored
 
@@ -348,7 +382,8 @@ def handle_decide(tg: Telegram, chat_id: int, state: ChatState) -> None:
         # Hand the extractor what it already knows about these people, so a
         # constraint Priya stated in July does not need restating today.
         known = people.prior_knowledge(PEOPLE, chat_id)
-        constraints = pipeline.extract_constraints(state.as_text(), known=known)
+        constraints = (demo_constraints() if state.demo_mode
+                       else pipeline.extract_constraints(state.as_text(), known=known))
         state.constraints = constraints
 
         rendered = pipeline.render_constraints(constraints)
@@ -873,6 +908,7 @@ HELP = (
     "that fit, run a poll — and once one of you approves, I <b>phone the restaurant</b> "
     "with a voice agent to book it, handle an alternate time when needed, and record any deposit for FPS.\n\n"
     "/decide — read the chat and propose three\n"
+    "/demo — load the fixed three-person dinner rehearsal\n"
     "/close — close the poll, pick the winner, ask to call\n"
     "/private — private requirements; /private new starts a new outing\n"
     "/negotiate 19:00-20:00 budget 200 — set time and an optional price guard; deposits are recorded for FPS\n"
@@ -911,6 +947,20 @@ def handle_message(tg: Telegram, message: dict) -> None:
     verb = command.group(1).lower()
     if verb in ("start", "help"):
         tg.send(chat_id, HELP)
+    elif verb == "demo":
+        reset_outing(state, tg, chat_id)
+        state.demo_mode = True
+        for demo_author, demo_text in DEMO_HISTORY:
+            state.add(demo_author, demo_text)
+        save_state()
+        tg.send(
+            chat_id,
+            "<b>Tomorrow's demo plan loaded.</b>\n"
+            "Dinner next Saturday at 7:00 PM · 3 people\n"
+            "Kai: Sha Tin · Ethan: Kennedy Town · Jenny: Sheung Shui\n\n"
+            "Finding three places now…",
+        )
+        handle_decide(tg, chat_id, state)
     elif verb == "private":
         parts = text.split()
         if len(parts) > 1 and parts[1].lower() == "new":

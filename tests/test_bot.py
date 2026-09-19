@@ -62,7 +62,7 @@ SUITE_PEOPLE = Path(__file__).resolve().parent / "_test_suite_people.json"
 
 
 def run() -> Suite:
-    s = Suite("bot", expect_at_least=103)
+    s = Suite("bot", expect_at_least=107)
     bot.PENDING_PATH = TMP_PENDING
     # notify_bridge_dial makes a real POST to localhost:8080. Stub it, and
     # exercise both branches deliberately further down rather than letting a
@@ -105,6 +105,27 @@ def run() -> Suite:
     s.eq("blank lines are not stored", len(st.history), 3)
     st.add("Dan", "single line")
     s.eq("a single-line message adds one line", len(st.history), 4)
+
+    # --- deterministic /demo rehearsal -----------------------------------
+    demo = bot.demo_constraints()
+    s.eq("demo fixes the party at three", demo["party_size"], 3)
+    s.eq("demo fixes dinner next Saturday at seven", demo["when_text"], "7 pm next Saturday")
+    s.eq("demo includes all three travel origins",
+         [(x["who"], x["place"]) for x in demo["coming_from"]],
+         [("Kai", "Sha Tin"), ("Ethan", "Kennedy Town"), ("Jenny", "Sheung Shui")])
+    bot.STATE.clear()
+    demo_tg = FakeTelegram()
+    real_handle_decide = bot.handle_decide
+    bot.handle_decide = lambda *_args: None
+    try:
+        bot.handle_message(demo_tg, msg("/demo", chat_id=-777)["message"])
+    finally:
+        bot.handle_decide = real_handle_decide
+    demo_state = bot.state_for(-777)
+    s.check("/demo enables the fixed rehearsal mode", demo_state.demo_mode)
+    s.eq("/demo seeds three speaker messages", len(demo_state.history), 3)
+    s.contains("/demo confirmation names the dinner", demo_tg.sent_text(), "Dinner next Saturday")
+    bot.STATE.clear()
 
     big = bot.ChatState()
     for i in range(250):
