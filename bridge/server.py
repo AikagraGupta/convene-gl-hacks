@@ -534,8 +534,8 @@ def vapi_offer_note(pending: dict, turns: list[dict]) -> str:
         return (f"The venue offered to hold {offered} people, but the approved "
                 f"request was for {requested}. This is not a valid reservation "
                 "for the approved party.")
-    return ("The venue said it could hold the requested table, but this inquiry "
-            "did not independently verify a booking.")
+    return ("The venue said it could hold the requested table, but RainCheck "
+            "did not receive an explicit booking confirmation.")
 
 
 def _venue_speech(turns: list[dict]) -> str:
@@ -695,7 +695,7 @@ def monitor_vapi_call(call_id: str) -> None:
     if pending.get("vapi_call_id") == call_id and pending.get("status") == "vapi_calling":
         patch_pending(status="vapi_review_required")
         send_telegram(pending.get("chat_id"),
-                      "The Vapi call is no longer being tracked automatically. Check its status in Vapi before trying again. No reservation is confirmed.")
+                      "The Vapi call is no longer being tracked automatically. Check the call desk and Vapi dashboard for the booking result before trying again.")
 
 
 # --------------------------------------------------------------------------

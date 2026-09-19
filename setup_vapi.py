@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configure the supplied Vapi assistant for safe restaurant inquiries.
+"""Configure the supplied Vapi assistant for restaurant booking calls.
 
 Run with --apply to change the remote assistant. A local ignored backup is
 written first. This never dials a phone number.

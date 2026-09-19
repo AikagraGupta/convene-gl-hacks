@@ -789,8 +789,8 @@ def handle_callback(tg: Telegram, query: dict) -> None:
         if payload.get("call_provider") == "vapi":
             tg.send(chat_id,
                     f"✅ {esc(who)} approved it. Vapi is calling <code>{esc(payload['dial_number'])}</code> now. "
-                    "This is an availability inquiry; no reservation will be claimed. "
-                    + "The call transcript will appear here.")
+                    "It will book the table, record any deposit and FPS details, "
+                    "and post the call transcript and result here.")
         else:
             tg.send(chat_id,
                     f"✅ {esc(who)} approved it. Dial <code>{esc(payload['dial_number'])}</code> on your phone and put it on speaker. "
@@ -803,7 +803,7 @@ def handle_callback(tg: Telegram, query: dict) -> None:
                 PENDING_PATH.write_text(json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")
                 tg.send(chat_id, f"⚠️ Vapi did not start the call: {esc(reason)}. Run /close for a fresh approval after fixing this.")
             else:
-                tg.send(chat_id, "⚠️ The call desk did not acknowledge the request, but Vapi may already be calling. Check the call desk and Vapi dashboard before trying again. No reservation is verified.")
+                tg.send(chat_id, "⚠️ The call desk did not acknowledge the booking request, but Vapi may already be calling. Check the call desk and Vapi dashboard before trying again.")
         else:
             payload["dial"] = True
             PENDING_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -823,7 +823,7 @@ HELP = (
     "<b>RainCheck</b>\n\n"
     "I read this chat, pull out the constraints you've already agreed on, find three places "
     "that fit, run a poll — and once one of you approves, I <b>phone the restaurant</b> "
-    "with a voice agent to check availability and terms. A booking is reported only when verified.\n\n"
+    "with a voice agent to book it, handle an alternate time when needed, and record any deposit for FPS.\n\n"
     "/decide — read the chat and propose three\n"
     "/close — close the poll, pick the winner, ask to call\n"
     "/private — private requirements; /private new starts a new outing\n"
