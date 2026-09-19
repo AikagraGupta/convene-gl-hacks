@@ -30,7 +30,7 @@ Paste verbatim. The disclosure is the first thing out of its mouth — not on
 request, not buried in sentence four.
 
 ```
-Hello, I'm an AI assistant calling on behalf of {{booking_name}} — I hope that's alright. I'd like to book a table for {{party_size}} people {{when_text}}. Is that possible?
+Hello, I'm an AI assistant calling on behalf of {{booking_name}}. I'm helping them book a dinner table for {{party_size}} people at {{restaurant_name}} on {{when_text}}. Is now a good time?
 ```
 
 ---

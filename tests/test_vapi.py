@@ -86,6 +86,13 @@ def run() -> Suite:
                    "goodbye phrase")
         s.contains("agent does not ask for a meal price", setup_vapi.SYSTEM_PROMPT,
                    "Do not ask for a price")
+        s.contains("demo opener discloses the AI and sounds conversational",
+                   setup_vapi.FIRST_MESSAGE,
+                   "Hello, I'm an AI assistant calling on behalf of")
+        s.contains("demo opener frames the dinner booking",
+                   setup_vapi.FIRST_MESSAGE, "book a dinner table")
+        s.contains("demo opener checks whether staff is ready",
+                   setup_vapi.FIRST_MESSAGE, "Is now a good time?")
         s.eq("transcript keeps staff and agent roles", vapi_calls.turns({"artifact": {"messages": [
             {"role": "bot", "message": "Hello"}, {"role": "user", "message": "Yes"},
             {"role": "system", "message": "internal"}]}}),

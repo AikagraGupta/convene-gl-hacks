@@ -19,8 +19,8 @@ ROOT = Path(__file__).resolve().parent
 
 FIRST_MESSAGE = (
     "Hello, I'm an AI assistant calling on behalf of {{booking_name}}. "
-    "I'd like to book a table at {{restaurant_name}} for {{party_size}} "
-    "people at {{when_text}}. Is that possible?"
+    "I'm helping them book a dinner table for {{party_size}} people at "
+    "{{restaurant_name}} on {{when_text}}. Is now a good time?"
 )
 
 SYSTEM_PROMPT = """RAIN_CHECK_BOOKING_V3
