@@ -193,8 +193,9 @@ group and the restaurant offers different terms on the call.
    permits asking staff to hold those exact terms. Final reported terms must
    match the checked offer before the group sees a confirmed booking.
 5. The group receives the complete transcript after every call, whether or not
-   a table was booked. Private identities and limits stay out of the approval
-   card; staff notes remain out of the structured result. The operator
+   a table was booked. A matching Vapi hold also gets a tentative one-tap
+   calendar link; mismatched or unverified offers do not. Private identities and
+   limits stay out of the approval card; staff notes remain out of the structured result. The operator
    and voice provider still see the combined requirements and local call log.
 
 `/private new` starts another outing and deletes the prior event's saved

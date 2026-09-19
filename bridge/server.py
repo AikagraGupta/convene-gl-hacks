@@ -540,6 +540,44 @@ def vapi_offer_note(pending: dict, turns: list[dict]) -> str:
             "did not independently verify a booking.")
 
 
+def vapi_calendar_candidate(pending: dict, turns: list[dict]) -> dict | None:
+    """Return terms for a tentative calendar reminder from a matching hold."""
+    venue_speech = " ".join(
+        str(turn.get("message") or "") for turn in turns
+        if turn.get("source") == "user"
+    )
+    if not venue_speech or not re.search(
+        r"\b(?:book|booking|reserve|reserved|reservation|hold|holds|held|keep|save)\b|留|预订|預訂",
+        venue_speech, re.I,
+    ):
+        return None
+    offered_sizes = []
+    for first, second in re.findall(
+        r"\b(\d{1,2})\s*(?:people?|persons?|pax|seats?)\b|\b(\d{1,2})\s*[个位]",
+        venue_speech, re.I,
+    ):
+        offered_sizes.append(int(first or second))
+    try:
+        requested = int(pending.get("party_size"))
+    except (TypeError, ValueError):
+        return None
+    if not offered_sizes or offered_sizes[-1] != requested:
+        return None
+    policy = pending.get("negotiation") or {}
+    if policy.get("max_deposit") == 0 and not re.search(
+        r"\b(?:no|zero|none|not required|not needed)\s+deposit\b|"
+        r"\bdeposit\s+(?:is\s+)?(?:zero|none|not required|not needed|free)\b|"
+        r"\b(?:don't|do not)\s+(?:need|require)\s+(?:a\s+)?deposit\b",
+        venue_speech, re.I,
+    ):
+        return None
+    return {
+        "confirmed_time": str(pending.get("when_text") or ""),
+        "confirmed_party_size": requested,
+        "booking_name": pending.get("booking_name") or "a guest",
+    }
+
+
 def format_vapi_result(pending: dict, turns: list[dict]) -> str:
     """Report a real phone inquiry without presenting it as a reservation."""
     name = pending.get("restaurant_display") or pending.get("restaurant_name") or "the venue"
@@ -549,6 +587,14 @@ def format_vapi_result(pending: dict, turns: list[dict]) -> str:
     note = vapi_offer_note(pending, turns)
     if note:
         lines.append(note)
+    candidate = vapi_calendar_candidate(pending, turns)
+    if candidate:
+        link = invite.calendar_url(pending, candidate)
+        if link:
+            lines.append(
+                f"\n📅 <a href=\"{esc(link)}\">Add to your calendar</a>"
+                " — everyone tap it once. <i>This is a tentative reminder from the venue's stated hold; confirm the reservation before relying on it.</i>"
+            )
     lines.append("<b>No reservation is verified in Convene.</b> Review the call and confirm with the venue before making plans.")
     if pending.get("private_mode"):
         lines.append("The full transcript is posted below, including calls that use private requirements.")

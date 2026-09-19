@@ -110,6 +110,16 @@ def run() -> Suite:
                    "offered to hold 5 people")
         s.contains("Vapi explains why the offer was rejected", mismatch_text,
                    "approved request was for 6")
+        s.check("mismatched Vapi hold has no calendar link",
+                "calendar.google.com" not in mismatch_text)
+        matching_turns = [
+            {"source": "user", "message": "We can hold 6 seats and there is no deposit."},
+        ]
+        matching_text = server.format_vapi_result(pending, matching_turns)
+        s.contains("matching Vapi hold offers a calendar link", matching_text,
+                   "calendar.google.com")
+        s.contains("calendar link is tappable in Telegram", matching_text,
+                   'href=\"https://calendar.google.com')
         # A completed Vapi call must actually close the Telegram live message
         # and send a result. Vapi's real artifacts label agent turns "bot".
         ended = {"status": "ended", "endedReason": "customer-ended-call", "artifact": {
