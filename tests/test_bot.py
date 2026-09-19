@@ -396,12 +396,53 @@ def run() -> Suite:
             "inline_keyboard" in str(p.get("reply_markup", "")) for _, p in tg2.calls))
 
         tg3 = FakeTelegram()
-        bot.try_answer(tg3, -100, st, "2pm today", "Kai")
-        s.eq("the second half lands too", st.constraints.get("when_text"), "2pm today")
+        # "2pm today" would depend on the wall clock (after 2pm it has passed
+        # and the bot rightly asks for a day), so answer with tomorrow.
+        import invite as inv3
+        pinned = inv3.absolute_when("2pm tomorrow")
+        bot.try_answer(tg3, -100, st, "2pm tomorrow", "Kai")
+        s.eq("the second half lands too, pinned to a real date",
+             st.constraints.get("when_text"), pinned)
         s.eq("and the question is closed", st.awaiting, None)
         s.check("NOW the approval card appears, with no command re-run", any(
             "inline_keyboard" in str(p.get("reply_markup", "")) for _, p in tg3.calls))
-        s.contains("and it carries the answered details", tg3.sent_text(), "2pm today")
+        s.contains("and it carries the answered details", tg3.sent_text(), pinned)
+
+        # --- the day said in chat is never lost ("next saturday" + "9 pm") ----
+        st = seeded_state(None)
+        st.history.clear()
+        for line in ("Kai: lets get dinner next saturday", "Kai: around 9 pm", "pqwer: sure"):
+            st.history.append(line)
+        st.constraints = {"party_size": 2, "when_text": "9 pm", "hard": []}
+        tgd = FakeTelegram({"stopPoll": {"options": [
+            {"voter_count": 0}, {"voter_count": 3}, {"voter_count": 0}, {"voter_count": 0}]}})
+        bot.handle_close(tgd, -100, st)
+        saturday = inv3.absolute_when("9 pm next saturday")
+        s.eq("the day from an earlier message is carried into the booking",
+             st.constraints.get("when_text"), saturday)
+        s.check("it is a Saturday, not today", saturday.startswith("9 pm on Saturday"))
+        s.contains("the approval card shows the exact date", tgd.sent_text(), saturday)
+        s.eq("and the call payload carries the exact date",
+             (st.approval_payload or {}).get("when_text"), saturday)
+
+        # --- nobody named a day: ask, never guess --------------------------
+        st = seeded_state(None)
+        st.history.clear()
+        st.history.append("Kai: dinner around 9 pm?")
+        st.constraints = {"party_size": 2, "when_text": "9 pm", "hard": []}
+        tge = FakeTelegram({"stopPoll": {"options": [
+            {"voter_count": 0}, {"voter_count": 3}, {"voter_count": 0}, {"voter_count": 0}]}})
+        bot.handle_close(tge, -100, st)
+        s.eq("a time with no day anywhere asks which day", st.awaiting["fields"], ["when_day"])
+        s.contains("the question says which day", tge.sent_text(), "which day")
+        s.check("no approval card without a date", not any(
+            "inline_keyboard" in str(p.get("reply_markup", "")) for _, p in tge.calls))
+        tgf = FakeTelegram()
+        bot.try_answer(tgf, -100, st, "saturday", "Kai")
+        s.eq("a one-word day answer completes the date",
+             st.constraints.get("when_text"), inv3.absolute_when("9 pm saturday"))
+        s.check("then the card appears", any(
+            "inline_keyboard" in str(p.get("reply_markup", "")) for _, p in tgf.calls))
 
         # Both at once should finish in one step.
         st, tg = closed_with({"hard": []})
@@ -628,7 +669,7 @@ def run() -> Suite:
                  "satisfies": ["no pork & no beef"], "fails": ["a & b"],
                  "website": "https://x.test/?a=1&b=2"}]
     st.poll_options = ["Fish & Chips <Central>", bot.NONE_OPTION]
-    st.constraints = {"party_size": 2, "when_text": "2pm & later",
+    st.constraints = {"party_size": 2, "when_text": "Friday 2pm & later",
                       "hard": [{"constraint": "no pork & no beef"}]}
     tg = FakeTelegram({"stopPoll": {"options": [{"voter_count": 3}, {"voter_count": 0}]}})
     bot.handle_close(tg, -100, st)

@@ -80,18 +80,110 @@ def _parse_clock(text: str) -> tuple[int, int] | None:
     return None
 
 
+_MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7,
+           "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12}
+_MONTH_RE = r"(jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)[a-z]*\.?"
+_WEEKDAY_RE = r"(mon|tues?|wed|thu(?:rs?)?|fri|sat|sun)(?:day|nesday|urday|sday|rsday)?\b"
+_WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+_MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July",
+                "August", "September", "October", "November", "December"]
+
+# Any phrase that names the DAY of a booking. Used to find the day in the chat
+# when the extracted time only kept the clock ("9 pm" from "next saturday
+# around 9 pm"), which is how a Saturday booking became "today" on the phone.
+DAY_PHRASE = re.compile(
+    r"\b(?:day\s+after\s+tomorrow|tomorrow|tmr|tmrw|today|tonight|"
+    r"(?:this\s+coming|this|next|coming)\s+(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\b|"
+    r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\b|"
+    r"\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?" + _MONTH_RE + r"|"
+    + _MONTH_RE + r"\s+\d{1,2}(?:st|nd|rd|th)?\b|"
+    r"\d{1,2}/\d{1,2}(?:/\d{2,4})?\b)",
+    re.I,
+)
+
+
+def _explicit_date(low: str, now: datetime) -> datetime | None:
+    """"26 September", "Sep 26th", "26/9" -- the next time that date comes round."""
+    day = month = None
+    found = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?" + _MONTH_RE, low)
+    if found:
+        day, month = int(found.group(1)), _MONTHS[found.group(2)[:3]]
+    else:
+        found = re.search(r"\b" + _MONTH_RE + r"\s+(\d{1,2})(?:st|nd|rd|th)?\b", low)
+        if found:
+            month, day = _MONTHS[found.group(1)[:3]], int(found.group(2))
+        else:
+            found = re.search(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b", low)
+            if found:
+                # Hong Kong writes day/month.
+                day, month = int(found.group(1)), int(found.group(2))
+    if not day or not month:
+        return None
+    for year in (now.year, now.year + 1):
+        try:
+            candidate = now.replace(year=year, month=month, day=day)
+        except ValueError:
+            return None
+        if candidate.date() >= now.date():
+            return candidate
+    return None
+
+
 def _parse_day(text: str, now: datetime) -> datetime | None:
     """The date the booking falls on, or None if the words do not say."""
     low = (text or "").lower()
-    if "tomorrow" in low:
+    explicit = _explicit_date(low, now)
+    if explicit:
+        return explicit
+    if re.search(r"\bday\s+after\s+tomorrow\b", low):
+        return now + timedelta(days=2)
+    if re.search(r"\b(?:tomorrow|tmr|tmrw)\b", low):
         return now + timedelta(days=1)
-    if "today" in low or "tonight" in low or "this " in low:
+    found = re.search(r"\b(?:(this\s+coming|this|next|coming)\s+)?" + _WEEKDAY_RE, low)
+    if found:
+        index = _WEEKDAYS[found.group(2)[:3]]
+        ahead = (index - now.weekday()) % 7
+        if found.group(1) == "this" and ahead == 0:
+            return now                                   # "this Saturday", said on Saturday
+        return now + timedelta(days=ahead or 7)          # "(next) Saturday" said on Saturday means next week
+    if re.search(r"\b(?:today|tonight)\b", low) or re.search(
+            r"\bthis\s+(?:evening|afternoon|morning)\b", low):
         return now
-    for name, index in _WEEKDAYS.items():
-        if re.search(r"\b" + name + r"[a-z]*\b", low):
-            ahead = (index - now.weekday()) % 7
-            return now + timedelta(days=ahead or 7)   # "Friday" said on Friday means next week
     return None
+
+
+def has_day(text: str) -> bool:
+    return _parse_day(text, datetime.now(HK)) is not None
+
+
+def find_day_phrase(text: str) -> str | None:
+    """The last day-naming phrase in some text, e.g. "next saturday"."""
+    found = list(DAY_PHRASE.finditer(text or ""))
+    return found[-1].group(0) if found else None
+
+
+def absolute_when(when_text: str, now: datetime | None = None) -> str | None:
+    """"9 pm" + "next saturday" -> "9 pm on Saturday 26 September".
+
+    Said on the phone as a real date, so nobody at the venue has to work out
+    which Saturday, and the agent never has to guess -- the guess it made on a
+    real call was "today". Returns None if there is no day or no clock, or the
+    moment has already passed.
+    """
+    now = now or datetime.now(HK)
+    clock = _parse_clock(when_text)
+    day = _parse_day(when_text, now)
+    if clock is None or day is None:
+        return None
+    start = day.replace(hour=clock[0], minute=clock[1], second=0, microsecond=0)
+    if start <= now:
+        return None
+    hour12 = clock[0] % 12 or 12
+    suffix = "am" if clock[0] < 12 else "pm"
+    clock_text = f"{hour12}:{clock[1]:02d} {suffix}" if clock[1] else f"{hour12} {suffix}"
+    if (clock[0], clock[1]) == (12, 0):
+        clock_text = "12 noon"
+    return f"{clock_text} on {_WEEKDAY_NAMES[start.weekday()]} {start.day} {_MONTH_NAMES[start.month - 1]}"
 
 
 def event_time(when_text: str, confirmed_time: str = "",

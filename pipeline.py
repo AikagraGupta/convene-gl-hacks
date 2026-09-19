@@ -350,6 +350,10 @@ Rules:
   "tonight", "after work", "lunchtime", "friday" and "tomorrow" are NOT: they name a mood or a
   date, not a slot a table can be held for. If the group only said something vague, leave
   when_text null and put the question in open_questions.
+- when_text must ALSO keep the DAY if anyone named one, even in a different message:
+  "next saturday" + "around 9 pm" is "next saturday at 9pm", not "9 pm". Keep their words for
+  the day ("next saturday", "friday", "26 sept"); do not convert it to a date and do not ask
+  what date it is -- the bot resolves the day itself.
 
 ALREADY ESTABLISHED about these people from earlier conversations. Treat this as true unless
 this chat contradicts it, and carry it into your answer with the ORIGINAL quote where you have

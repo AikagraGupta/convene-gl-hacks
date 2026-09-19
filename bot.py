@@ -39,6 +39,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 import exa_search
+import invite
 import people
 import places
 import pipeline
@@ -531,7 +532,35 @@ def handle_close(tg: Telegram, chat_id: int, state: ChatState) -> None:
 QUESTION_LABELS = {
     "party_size": "exactly how many of you there are",
     "when_text": "exactly what time",
+    "when_day": "which day",
 }
+
+
+def resolve_when(state: "ChatState", when_text: str) -> str | None:
+    """Pin the booking time to a real date, e.g. "9 pm on Saturday 26 September".
+
+    The extractor often keeps only the clock ("9 pm") and drops the day that
+    was said a few lines earlier ("next saturday"). The voice agent then
+    guessed "today" on a real call. So if the time has no day, take the most
+    recent day the group mentioned; if nobody named one, return None and the
+    bot asks. Never guess a date down the phone.
+    """
+    text = when_text or ""
+    if not invite.has_day(text):
+        for line in reversed(state.history):
+            body = line.split(": ", 1)[-1]
+            if body.startswith("/"):
+                continue
+            phrase = invite.find_day_phrase(body)
+            if phrase:
+                text = f"{text} {phrase}"
+                break
+    return invite.absolute_when(text)
+
+
+def resolve_when_passed(state: "ChatState", when_text: str) -> bool:
+    """True when the chat named a day, but that day and time are already over."""
+    return any(invite.find_day_phrase(line.split(": ", 1)[-1]) for line in state.history)
 
 
 def party_size_needs_confirmation(constraints: dict) -> bool:
@@ -579,6 +608,15 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
             missing.append("when_text")
             vague_reason = why
             state.constraints["when_text"] = None
+        else:
+            resolved = resolve_when(state, when_text)
+            if resolved:
+                when_text = resolved
+                state.constraints["when_text"] = resolved
+            else:
+                missing.append("when_day")
+                if invite.has_day(when_text) or resolve_when_passed(state, when_text):
+                    vague_reason = "That time has already passed"
 
     if missing:
         # Ask, and hold the thread. The next ordinary message in the chat is
@@ -586,8 +624,13 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
         state.awaiting = {"fields": missing, "asked_at": datetime.now(timezone.utc).isoformat()}
         save_state()
         asked = " and ".join(QUESTION_LABELS[field] for field in missing)
-        note = (f"\n\n{esc(vague_reason)} \u2014 a restaurant needs a clock time."
-                if vague_reason else "")
+        if "when_day" in missing and vague_reason:
+            note = f"\n\n{esc(vague_reason)} \u2014 which day should I book?"
+        elif "when_day" in missing:
+            note = "\n\nNobody said which day, and I won't guess a date on the phone."
+        else:
+            note = (f"\n\n{esc(vague_reason)} \u2014 a restaurant needs a clock time."
+                    if vague_reason else "")
         tg.send(
             chat_id,
             f"🏆 <b>{esc(winner['name'])}</b> wins.\n<i>{tally}</i>\n\n"
@@ -942,9 +985,19 @@ def try_answer(tg: Telegram, chat_id: int, state: ChatState, text: str, author: 
         state.awaiting = None
         return
 
-    answer = pipeline.parse_answer(text, needed)
+    model_fields = [field for field in needed if field != "when_day"]
+    answer = pipeline.parse_answer(text, model_fields) if model_fields else {}
     got: list[str] = []
+    if "when_day" in needed and invite.has_day(text):
+        # Deterministic on purpose: the day is what the phone call gets wrong.
+        clock = state.constraints.get("when_text") or ""
+        resolved = invite.absolute_when(text) or invite.absolute_when(f"{clock} {text}")
+        if resolved:
+            state.constraints["when_text"] = resolved
+            got.append("when_day")
     for field in needed:
+        if field == "when_day":
+            continue
         value = answer.get(field)
         if not value:
             continue
@@ -974,7 +1027,7 @@ def try_answer(tg: Telegram, chat_id: int, state: ChatState, text: str, author: 
     said = []
     if "party_size" in got:
         said.append(f"party of <b>{esc(state.constraints['party_size'])}</b>")
-    if "when_text" in got:
+    if "when_text" in got or "when_day" in got:
         said.append(f"<b>{esc(state.constraints['when_text'])}</b>")
     tg.send(chat_id, f"Got it \u2014 {esc_join(said)}. Thanks {esc(author)}.")
 
