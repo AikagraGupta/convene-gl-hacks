@@ -46,7 +46,7 @@ def handle(tg, message: dict) -> None:
             tg.send(dm_id, "That link expired or I cannot verify your membership. Ask the group for a fresh /private link; the bot may need group admin rights to check membership.")
             return
         store.join(user_id, token)
-        tg.send(dm_id, f"<b>Just between you and Convene</b>\nPlan: {esc(plan['title'])}\n\n"
+        tg.send(dm_id, f"<b>Just between you and RainCheck</b>\nPlan: {esc(plan['title'])}\n\n"
                 "Tell me a limit using <code>budget 150</code> or <code>time 19:00-20:00</code>, "
                 "or tap a requirement below. These apply to this outing only. Review and save before they take effect.", reply_markup=KEYBOARD)
         return

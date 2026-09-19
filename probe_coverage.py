@@ -2,7 +2,7 @@
 """probe_coverage.py — does OpenStreetMap actually know about these places?
 
 Run this BEFORE building anything on a new category. It answers the only
-question that matters for generalising Shum-AI beyond restaurants: how many
+question that matters for generalising RainCheck beyond restaurants: how many
 venues of this kind exist in OSM's Hong Kong data, and how many of them carry
 a phone number the agent could dial.
 
@@ -50,7 +50,7 @@ def fetch(query: str) -> list[dict]:
             req = urllib.request.Request(
                 endpoint,
                 data=urllib.parse.urlencode({"data": query}).encode("utf-8"),
-                headers={"User-Agent": "shumai-coverage-probe/0.1"},
+                headers={"User-Agent": "raincheck-coverage-probe/0.1"},
             )
             with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
                 return json.loads(resp.read().decode("utf-8")).get("elements", [])

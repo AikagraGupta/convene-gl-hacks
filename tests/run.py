@@ -42,7 +42,7 @@ def main(argv: list[str]) -> int:
         print(f"available: {', '.join(SUITES)}")
         return 2
 
-    print(f"\n{BOLD}Shum-AI test suite{RESET}")
+    print(f"\n{BOLD}RainCheck test suite{RESET}")
     print(f"{DIM}network fully mocked — any unmocked call is a failure{RESET}\n")
 
     summaries = []

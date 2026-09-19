@@ -23,8 +23,8 @@ FIRST_MESSAGE = (
     "people at {{when_text}}?"
 )
 
-SYSTEM_PROMPT = """CONVENE_INQUIRY_V2
-You are Convene, an AI assistant making a short restaurant availability inquiry.
+SYSTEM_PROMPT = """RAIN_CHECK_INQUIRY_V2
+You are RainCheck, an AI assistant making a short restaurant availability inquiry.
 The person on the line is venue staff. Disclose that you are an AI assistant in
 your first sentence. Be friendly, concise, and pause for answers.
 
@@ -62,7 +62,7 @@ def main() -> int:
         print("The existing assistant has no supported model configuration")
         return 1
     update = {
-        "name": "Convene Restaurant Inquiry",
+        "name": "RainCheck Restaurant Inquiry",
         "firstMessage": FIRST_MESSAGE,
         "model": {
             "provider": model["provider"],

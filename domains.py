@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """domains.py — what kind of thing are we booking?
 
-Shum-AI v1 hard-coded one answer: a restaurant table. That assumption is
+RainCheck v1 hard-coded one answer: a restaurant table. That assumption is
 spread across four files -- the Overpass query in places.py, the constraint
 and picks prompts in pipeline.py, the dynamic variables the voice agent
 speaks, and the words the bot uses in the group chat. Generalising means

@@ -87,7 +87,7 @@ def main() -> int:
     # and each one is its own constraint. Mirror that here or the dry run is
     # not testing the same input the bot produces.
     lines = [ln.strip() for ln in chat.splitlines() if ln.strip()]
-    print(f"\n{BOLD}Shum-AI dry run{RESET}")
+    print(f"\n{BOLD}RainCheck dry run{RESET}")
     print(f"{DIM}{len(lines)} lines of conversation, no Telegram, no phone call{RESET}\n")
 
     print(f"{BOLD}1. Reading the argument{RESET}")

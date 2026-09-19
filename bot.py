@@ -169,11 +169,31 @@ def reset_outing(state: ChatState, tg: Telegram | None = None, chat_id: int | No
     state.voter_names = {}
     state.picks = []
     state.constraints = {}
+    state.deciding = False
     state.approval_token = None
     state.approval_payload = None
     state.awaiting = None
     state.pending_winner = None
     state.negotiation_limits = {}
+
+
+def forget_chat(state: ChatState, tg: Telegram, chat_id: int) -> str:
+    """Forget the group's memory and conversation context.
+
+    Telegram does not offer a way to delete the bot's view of old group
+    messages. Clearing our local history is therefore the boundary: the next
+    ``/decide`` can only use messages received after this command. Reset all
+    in-flight decision state as well, so an old poll or approval cannot carry
+    context across the boundary.
+    """
+    message = people.forget(PEOPLE, chat_id, "")
+    if state.private_plan:
+        private_inputs.retire(state.private_plan)
+    reset_outing(state, tg, chat_id)
+    state.private_plan = None
+    people.save(PEOPLE)
+    save_state()
+    return message + "\nConversation context cleared — the next /decide starts fresh."
 
 
 # ---------------------------------------------------------------------------
@@ -800,7 +820,7 @@ def handle_callback(tg: Telegram, query: dict) -> None:
 # ===========================================================================
 
 HELP = (
-    "<b>Shum-AI</b>\n\n"
+    "<b>RainCheck</b>\n\n"
     "I read this chat, pull out the constraints you've already agreed on, find three places "
     "that fit, run a poll — and once one of you approves, I <b>phone the restaurant</b> "
     "with a voice agent to check availability and terms. A booking is reported only when verified.\n\n"
@@ -810,7 +830,7 @@ HELP = (
     "/negotiate 19:00-20:00 budget 200 — propose call limits (HKD/person, no deposit)\n"
     "/status — what I've read and what I know\n"
     "/who — every preference I remember, with the quote it came from\n"
-    "/forget NAME — drop someone; /forget all wipes it\n\n"
+    "/forget NAME — drop someone; /forget (or /forget all) clears memory and starts a fresh chat context\n\n"
     "<i>I can only see messages sent after I joined. Just talk normally; I'm reading.</i>"
 )
 
@@ -885,8 +905,11 @@ def handle_message(tg: Telegram, message: dict) -> None:
         target = text.split(maxsplit=1)[1].strip() if len(text.split()) > 1 else ""
         if target.lower() in ("all", "everyone", "everything"):
             target = ""
-        message = people.forget(PEOPLE, chat_id, target)
-        people.save(PEOPLE)
+        if not target:
+            message = forget_chat(state, tg, chat_id)
+        else:
+            message = people.forget(PEOPLE, chat_id, target)
+            people.save(PEOPLE)
         tg.send(chat_id, message)
     elif verb == "status":
         constraint_count = len(state.constraints.get("hard", [])) + len(state.constraints.get("vetoed", []))
@@ -990,7 +1013,8 @@ def drain_backlog(tg: Telegram) -> int | None:
     Replaying that means re-running a /decide from twenty minutes ago and
     re-firing a button press that was already handled — which crashes the bot
     before it has said hello. Messages go into history so context is not lost;
-    commands and callbacks are dropped on the floor.
+    commands and callbacks are dropped on the floor, except ``/forget`` which
+    is handled as an ordered context boundary.
     """
     offset = None
     absorbed = 0
@@ -1013,13 +1037,33 @@ def drain_backlog(tg: Telegram) -> int | None:
             message = update.get("message")
             if message and (message.get("chat") or {}).get("type") == "private":
                 continue  # Never import a queued DM into the shared memory pipeline.
-            if message and (message.get("text") or "") and not message["text"].strip().startswith("/"):
-                chat_id = (message.get("chat") or {}).get("id")
-                if chat_id is not None:
-                    state_for(chat_id).add(
-                        (message.get("from") or {}).get("first_name") or "someone", message["text"]
-                    )
-                    absorbed += 1
+            if not message:
+                continue
+            text = message.get("text") or message.get("caption") or ""
+            if not text:
+                continue
+            chat_id = (message.get("chat") or {}).get("id")
+            if chat_id is None:
+                continue
+            command = re.match(r"^/([a-z_]+)(?:@\w+)?\b", text.strip(), re.I)
+            if command and command.group(1).lower() == "forget":
+                target = text.split(maxsplit=1)[1].strip() if len(text.split()) > 1 else ""
+                if target.lower() in ("all", "everyone", "everything"):
+                    target = ""
+                state = state_for(chat_id)
+                if not target:
+                    forget_chat(state, tg, chat_id)
+                else:
+                    people.forget(PEOPLE, chat_id, target)
+                    people.save(PEOPLE)
+                # A queued /forget is a context boundary even though other
+                # queued commands are intentionally not replayed on startup.
+                continue
+            if not command:
+                state_for(chat_id).add(
+                    (message.get("from") or {}).get("first_name") or "someone", text
+                )
+                absorbed += 1
     print(f"[bot] drained backlog: {absorbed} messages into history, 0 actions fired")
     return offset or 0
 

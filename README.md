@@ -1,8 +1,8 @@
-# Convene
+# RainCheck
 
 **The group-chat agent that turns “what should we do?” into a plan everyone can act on.**
 
-Convene is a standalone hackathon project for the moment when a group has a
+RainCheck is a standalone hackathon project for the moment when a group has a
 dozen opinions, hidden constraints, and no decision. It reads the conversation,
 understands what each person actually said, finds strong options, gets the group
 to a decision, and carries the plan through to a venue call, transcript, and
@@ -14,12 +14,12 @@ out a form, repeat themselves, or become the project manager.
 ## The two-minute demo
 
 1. Start the bridge and bot.
-2. Add Convene to a Telegram group and talk naturally: “Thai food, around 7:30,
+2. Add RainCheck to a Telegram group and talk naturally: “Thai food, around 7:30,
    somewhere easy from Central and Kennedy Town.”
 3. Send `/decide`.
-4. Convene extracts the real constraints with the supporting quotes, proposes
+4. RainCheck extracts the real constraints with the supporting quotes, proposes
    three places, and opens a native Telegram poll.
-5. Send `/close` after the vote. Convene turns the winner into a clear booking
+5. Send `/close` after the vote. RainCheck turns the winner into a clear booking
    brief and asks the group to approve it.
 6. Approve the call. The voice agent speaks with the venue, checks the agreed
    details, posts the transcript to the group, and creates a one-tap calendar
@@ -28,7 +28,7 @@ out a form, repeat themselves, or become the project manager.
 The whole story is visible in the chat: messy conversation → shared decision →
 completed plan.
 
-## Why Convene matters
+## Why RainCheck matters
 
 Recommendations are easy. **Convergence is hard.** The useful information is
 usually scattered across ordinary messages:
@@ -38,7 +38,7 @@ usually scattered across ordinary messages:
 - “Somewhere after 7 works.”
 - “Please do not make me call the restaurant.”
 
-Convene turns those fragments into a shared, inspectable decision. It preserves
+RainCheck turns those fragments into a shared, inspectable decision. It preserves
 the words behind each extracted constraint, keeps private requirements private,
 and gives the group a closing mechanism so plans actually happen.
 
@@ -64,7 +64,7 @@ winner, and prepares the exact request that will be sent to the venue.
 ### Handles sensitive requirements privately
 
 Participants can send `/private` and save a budget, time window, or dietary and
-accessibility requirement in a DM. Convene combines those inputs when checking
+accessibility requirement in a DM. RainCheck combines those inputs when checking
 the venue while keeping the details out of the group approval card.
 
 ### Completes the last mile
@@ -168,7 +168,7 @@ The optional Vapi path can be enabled with an imported Twilio number:
 python3 setup_vapi.py --apply
 ```
 
-Set `CALL_PROVIDER=vapi` in `.env` to use that provider. Convene keeps the
+Set `CALL_PROVIDER=vapi` in `.env` to use that provider. RainCheck keeps the
 approved booking details consistent across Telegram, the call desk, the voice
 agent, and the final calendar event.
 

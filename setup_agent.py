@@ -36,7 +36,7 @@ from negotiation import client_tool
 
 DOC = ROOT / "docs" / "elevenlabs-agent.md"
 API = "https://api.elevenlabs.io/v1/convai"
-AGENT_NAME = "Shum-AI booking agent"
+AGENT_NAME = "RainCheck booking agent"
 MAX_CALL_SECONDS = 180  # free tier is 15 agent-minutes/month in total
 
 GREEN, RED, YELLOW, DIM, BOLD, RESET = (

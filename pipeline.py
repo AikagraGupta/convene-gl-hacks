@@ -202,7 +202,7 @@ def _call_openrouter(prompt: str) -> str:
             data = _post_json(
                 OPENROUTER_URL,
                 payload,
-                {"Authorization": f"Bearer {key}", "X-Title": "Shum-AI"},
+                {"Authorization": f"Bearer {key}", "X-Title": "RainCheck"},
             )
             text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content", "").strip()
             if text:

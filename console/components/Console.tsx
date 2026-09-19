@@ -4,7 +4,7 @@
  * The operator console.
  *
  * The reason this is built with CopilotKit rather than as a plain dashboard is
- * `useHumanInTheLoop`. Shum-AI's whole risk surface is one moment: an AI is
+ * `useHumanInTheLoop`. RainCheck's whole risk surface is one moment: an AI is
  * about to dial a real phone number and speak to a real person. That moment
  * wants exactly the primitive CopilotKit models — the agent can propose the
  * call, and the call cannot happen until a human looks at a rendered card and
@@ -278,7 +278,7 @@ export function Console() {
     <div className="shell">
       <header className="top">
         <div className="brand">
-          <h1>Shum-AI</h1>
+          <h1>RainCheck</h1>
           <span>operator console</span>
         </div>
 

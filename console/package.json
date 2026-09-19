@@ -1,8 +1,8 @@
 {
-  "name": "shum-ai-console",
+  "name": "raincheck-console",
   "version": "1.0.0",
   "private": true,
-  "description": "Operator console for Shum-AI. CopilotKit v2 human-in-the-loop gate on a real outbound phone call.",
+  "description": "Operator console for RainCheck. CopilotKit v2 human-in-the-loop gate on a real outbound phone call.",
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",

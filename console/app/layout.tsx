@@ -4,7 +4,7 @@ import "./globals.css";
 import { Providers } from "@/components/Providers";
 
 export const metadata: Metadata = {
-  title: "Shum-AI — operator console",
+  title: "RainCheck — operator console",
   description:
     "Human-in-the-loop gate on a real outbound restaurant phone call, built with CopilotKit v2.",
 };

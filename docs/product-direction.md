@@ -1,10 +1,10 @@
-# Convene: product direction and implementation review
+# RainCheck: product direction and implementation review
 
 Prepared 19 September 2026 from the supplied archive. This is a proposal and code review, not a claim that the proposed features are implemented.
 
 ## The product to build
 
-**Convene takes responsibility for getting a group plan across the finish line.**
+**RainCheck takes responsibility for getting a group plan across the finish line.**
 
 The user is the friend who always ends up organising: reading everyone's replies, remembering requirements, finding somewhere suitable, chasing a decision, calling, and starting again when the venue says no. The job to automate is that coordination work.
 
@@ -75,7 +75,7 @@ Fix: implement one second domain only after dinner recovery works. Each adapter 
 Example scenario, using explicitly labelled demonstration data:
 
 1. Six friends discuss dinner. One needs vegetarian food, one is coming from Sha Tin, one must leave by 9pm, and one has a HK$200 budget.
-2. Convene extracts a draft brief with the exact messages behind each requirement. Participants can correct it.
+2. RainCheck extracts a draft brief with the exact messages behind each requirement. Participants can correct it.
 3. A visual board shows three candidates against the requirements. Known failures are excluded; missing facts have amber question marks. No unsupported green ticks.
 4. The group picks an eligible candidate and approves a precise request: six people, 7:30pm, the agreed budget and requirements, with no deposit authority.
 5. The ElevenLabs agent checks with the venue. A teammate playing consenting venue staff says, “We can only seat you at 8:30.” Label this as a live role-play, not a real reservation.
@@ -158,13 +158,13 @@ The voice agent's purpose is to obtain missing real-world facts and negotiate on
 3. **Agreement board:** render the same backend plan in Telegram and the web view. Clicking a requirement opens its source; correcting it produces a new revision.
 4. **One recovery:** feed a venue counteroffer into validation, propose one repair, request any newly needed approval, and issue an evidenced receipt after confirmation.
 5. **Demo reliability:** rehearse the consenting role-play, expose connection/processing states, and provide a clearly labelled replay if the voice service fails. Verify one complete live-provider path separately from mocked tests.
-6. **Measure usefulness:** compare the current manual workflow with Convene on the same scripted scenarios, then try consenting real groups. Record organiser interventions and final-plan validity; report the sample and failures, not an invented time-saving percentage.
+6. **Measure usefulness:** compare the current manual workflow with RainCheck on the same scripted scenarios, then try consenting real groups. Record organiser interventions and final-plan validity; report the sample and failures, not an invented time-saving percentage.
 
 ## Two-minute pitch
 
 Suggested opening:
 
-“Every friend group has someone who becomes the unpaid organiser. They read every reply, remember everyone's requirements, find somewhere, call, and start again when it falls through. Convene takes that work out of the group chat.”
+“Every friend group has someone who becomes the unpaid organiser. They read every reply, remember everyone's requirements, find somewhere, call, and start again when it falls through. RainCheck takes that work out of the group chat.”
 
 Timing:
 
@@ -173,7 +173,7 @@ Timing:
 - 0:40–1:05: approve the request and run a short ElevenLabs role-play that produces the incompatible counteroffer.
 - 1:05–1:35: highlight the affected requirement, propose the smallest change, and obtain the needed approval.
 - 1:35–1:50: show the confirmed receipt and source evidence.
-- 1:50–2:00: “Convene carries the plan from conversation to confirmation—and handles the change that would normally send everyone back to the beginning.”
+- 1:50–2:00: “RainCheck carries the plan from conversation to confirmation—and handles the change that would normally send everyone back to the beginning.”
 
 This script describes the target build, not the current archive. Do not use the future tense implementation as a claim of existing functionality.
 
@@ -181,7 +181,7 @@ This script describes the target build, not the current archive. Do not use the 
 
 Calling businesses and finding restaurant reservations are established AI capabilities. Google publicly documents both business calling and restaurant availability search. The defensible direction here is continuity across multiple people's requirements, explicit agreement, a real-world counteroffer, and recovery.
 
-The README attributes the base to Shum-AI from a 12 September 2026 hackathon. The supplied repository has one baseline commit, `1d5c730`; this alone does not establish when each feature was built. Preserve the MIT attribution and write a precise before/during feature inventory based on the team's actual history. General Learning Hacks' published rules prohibit simply submitting a pre-existing project and require clear documentation of prior versus new work when building on one. Confirm how organisers apply that exception to this base; do not call the entire archive fresh hackathon work.
+The README attributes the base to RainCheck from a 12 September 2026 hackathon. The supplied repository has one baseline commit, `1d5c730`; this alone does not establish when each feature was built. Preserve the MIT attribution and write a precise before/during feature inventory based on the team's actual history. General Learning Hacks' published rules prohibit simply submitting a pre-existing project and require clear documentation of prior versus new work when building on one. Confirm how organisers apply that exception to this base; do not call the entire archive fresh hackathon work.
 
 The public overview and rules disagree on the submission deadline (10am versus 9am HKT on 20 September). Use the organiser-confirmed deadline; budget to the earlier time until resolved.
 

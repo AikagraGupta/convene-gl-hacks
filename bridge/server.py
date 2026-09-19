@@ -143,7 +143,7 @@ def transcript_messages(pending: dict, turns: list[dict]) -> list[str]:
         said = str(turn.get("message") or "").strip()
         if not said:
             continue
-        speaker = "🏪 Venue: " if turn.get("source") == "user" else "🤖 Convene: "
+        speaker = "🏪 Venue: " if turn.get("source") == "user" else "🤖 RainCheck: "
         line = speaker
         for char in said:
             encoded = esc(char)
@@ -363,7 +363,7 @@ def format_outcome(pending: dict, body: dict) -> str:
     if collected.get("staff_notes") and not pending.get("private_mode"):
         lines.append(f"Note: {esc(collected['staff_notes'])}")
     if status == "needs_approval":
-        lines.append("<b>Not confirmed by Convene.</b> The offer needs review against the agreed limits. "
+        lines.append("<b>Not confirmed by RainCheck.</b> The offer needs review against the agreed limits. "
                      "Review the call desk, settle any changes, then run /close for a fresh approval and call. "
                      "Do not assume a reservation exists.")
 
@@ -595,7 +595,7 @@ def format_vapi_result(pending: dict, turns: list[dict]) -> str:
                 f"\n📅 <a href=\"{esc(link)}\">Add to your calendar</a>"
                 " — everyone tap it once. <i>This is a tentative reminder from the venue's stated hold; confirm the reservation before relying on it.</i>"
             )
-    lines.append("<b>No reservation is verified in Convene.</b> Review the call and confirm with the venue before making plans.")
+    lines.append("<b>No reservation is verified in RainCheck.</b> Review the call and confirm with the venue before making plans.")
     if pending.get("private_mode"):
         lines.append("The full transcript is posted below, including calls that use private requirements.")
     if pending.get("demo_override"):
@@ -654,7 +654,7 @@ def monitor_vapi_call(call_id: str) -> None:
 # --------------------------------------------------------------------------
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ShumAIBridge/1.0"
+    server_version = "RainCheckBridge/1.0"
 
     # Only needed by the optional CopilotKit console on :3000. Missing CORS
     # headers surface as a bare "Failed to fetch" with no explanation at all
@@ -718,7 +718,7 @@ class Handler(BaseHTTPRequestHandler):
         if route in ("/", "/index.html", "/call_page.html"):
             self._file(HERE / "call_page.html", "text/html; charset=utf-8")
         elif route == "/health":
-            self._json({"ok": True, "service": "shum-ai-bridge", "port": PORT})
+            self._json({"ok": True, "service": "raincheck-bridge", "port": PORT})
         elif route == "/live":
             pending = read_pending()
             self._json({"turns": pending.get("live_turns") or [],

@@ -27,7 +27,7 @@ FIRST_OFFER = {"time": "20:30", "party_size": 6, "price_per_person": 180,
                "requirements_met": True}
 SECOND_OFFER = {**FIRST_OFFER, "time": "19:30", "price_per_person": 145}
 
-_data_dir = tempfile.TemporaryDirectory(prefix="convene-rehearsal-")
+_data_dir = tempfile.TemporaryDirectory(prefix="raincheck-rehearsal-")
 private_inputs.DB_PATH = Path(_data_dir.name) / "private.sqlite3"
 _lock = threading.RLock()
 _state = {"token": private_inputs.create(GROUP_ID, "Friday dinner"),
@@ -165,11 +165,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convene's interactive local rehearsal")
+    parser = argparse.ArgumentParser(description="RainCheck's interactive local rehearsal")
     parser.add_argument("--port", type=int, default=8090)
     args = parser.parse_args()
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"Convene rehearsal: http://127.0.0.1:{server.server_port}/", flush=True)
+    print(f"RainCheck rehearsal: http://127.0.0.1:{server.server_port}/", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

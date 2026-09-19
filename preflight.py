@@ -325,7 +325,7 @@ def check_vapi() -> None:
     except vapi_calls.VapiError as exc:
         bad("vapi", str(exc), "set VAPI_PHONE_NUMBER_ID to the imported Twilio number ID, then run python setup_vapi.py --apply")
         return
-    ok("vapi", f"active {phone.get('provider')} number {phone.get('number')} and Convene assistant {agent.get('name')}")
+    ok("vapi", f"active {phone.get('provider')} number {phone.get('number')} and RainCheck assistant {agent.get('name')}")
     warn("vapi", "preflight cannot place a call; verify outbound routing with a consented demo call")
 
 
@@ -365,7 +365,7 @@ def check_safety() -> None:
 
 def main() -> int:
     load_env(ROOT / ".env")
-    print(f"\n{BOLD}Shum-AI preflight{RESET}")
+    print(f"\n{BOLD}RainCheck preflight{RESET}")
     print(f"{DIM}every dependency, checked live{RESET}\n")
 
     for step in (check_tls_store, check_env_file, check_telegram, check_gemini,

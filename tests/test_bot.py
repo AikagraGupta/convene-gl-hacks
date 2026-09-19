@@ -113,6 +113,36 @@ def run() -> Suite:
     s.contains("the cap drops the oldest, not the newest", big.as_text(), "message 249")
     s.check("the oldest message really is gone", "message 0:" not in big.as_text())
 
+    # --- /forget resets the conversation boundary ------------------------
+    # Forgetting memory must also stop a later /decide from reading the old
+    # conversation. Telegram keeps the group backlog on its servers, so the
+    # bot's local history is the explicit boundary for a fresh outing.
+    bot.STATE.clear()
+    bot.PEOPLE = {}
+    fresh_chat = bot.state_for(-555)
+    fresh_chat.add("Priya", "old conversation detail")
+    fresh_chat.constraints = {"party_size": 6}
+    fresh_chat.picks = [{"name": "Old place"}]
+    fresh_chat.poll_id = "old-poll"
+    fresh_chat.poll_message_id = 44
+    people.learn(bot.PEOPLE, -555, {
+        "hard": [{"who": "Priya", "constraint": "no pork", "quote": "old conversation detail"}],
+        "soft": [], "vetoed": [], "coming_from": [],
+    })
+    tg = FakeTelegram({"stopPoll": {"ok": True}})
+    bot.handle_message(tg, msg("/forget", chat_id=-555)["message"])
+    cleared = bot.state_for(-555)
+    s.eq("/forget clears the old chat history", len(cleared.history), 0)
+    s.eq("/forget clears old decision constraints", cleared.constraints, {})
+    s.eq("/forget clears old candidates", cleared.picks, [])
+    s.eq("/forget closes the old poll", cleared.poll_id, None)
+    s.eq("/forget removes remembered people", people.prior_knowledge(bot.PEOPLE, -555), "")
+    bot.handle_message(tg, msg("new conversation only", chat_id=-555)["message"])
+    s.eq("new messages are the only context after /forget",
+         cleared.as_text(), "Marcus: new conversation only")
+    s.check("old text cannot leak into the new context",
+            "old conversation detail" not in cleared.as_text())
+
     # --- backlog drain: absorb, never act --------------------------------
     # getUpdates hands back everything since the last acknowledged offset. If
     # a stale /decide or a stale button press is replayed, the bot dies before
@@ -153,6 +183,23 @@ def run() -> Suite:
     tg = FakeTelegram({"getUpdates": [[msg("hello", update_id=40)], None]})
     s.eq("a mid-drain failure keeps the offset already earned",
          bot.drain_backlog(tg), None)
+
+    # A /forget that was sent while the bot was offline still creates the
+    # same boundary during startup: messages before it are discarded, while
+    # messages after it become the only context for the next decision.
+    bot.STATE.clear()
+    bot.PEOPLE = {}
+    queued_forget = [
+        msg("old context", update_id=50),
+        msg("/forget all", update_id=51),
+        msg("new context", update_id=52),
+        msg("/decide", update_id=53),
+    ]
+    tg = FakeTelegram({"getUpdates": [queued_forget, []]})
+    s.eq("queued /forget advances past the backlog", bot.drain_backlog(tg), 54)
+    s.eq("queued /forget leaves only newer messages", bot.STATE[-100].as_text(),
+         "Marcus: new context")
+    s.check("queued /decide is still not replayed", "sendPoll" not in tg.methods())
 
     # --- /decide guards ---------------------------------------------------
     bot.STATE.clear()

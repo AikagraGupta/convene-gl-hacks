@@ -1,6 +1,6 @@
 """Vapi outbound phone leg. This module never starts a call on import.
 
-The caller must have a freshly approved Convene payload. The free Vapi number
+The caller must have a freshly approved RainCheck payload. The free Vapi number
 is inbound-only, so an imported, active provider number is required.
 """
 
@@ -15,7 +15,7 @@ from envlite import env, env_flag, env_list
 import places
 
 BASE = "https://api.vapi.ai"
-PROMPT_MARKER = "CONVENE_INQUIRY_V2"
+PROMPT_MARKER = "RAIN_CHECK_INQUIRY_V2"
 E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 
 
@@ -71,7 +71,7 @@ def assistant() -> dict:
     messages = (agent.get("model") or {}).get("messages") or []
     prompt = "\n".join(str(message.get("content") or "") for message in messages)
     if PROMPT_MARKER not in prompt:
-        raise VapiError("Vapi assistant is not configured for Convene; run setup_vapi.py")
+        raise VapiError("Vapi assistant is not configured for RainCheck; run setup_vapi.py")
     return agent
 
 

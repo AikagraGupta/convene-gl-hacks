@@ -147,11 +147,11 @@ def calendar_url(pending: dict, collected: dict | None = None,
         # is a reservation that does not exist -- and unlike the chat message,
         # nobody re-reads a calendar entry a week later to check. Say it here,
         # in the artefact itself, where the person who turns up will see it.
-        details = ["REHEARSAL - there is no real reservation. Shum-AI placed this "
+        details = ["REHEARSAL - there is no real reservation. RainCheck placed this "
                    "call to a test number rather than to the restaurant "
                    "(DEMO_PHONE was set), so nothing was booked."]
     else:
-        details = [f"Booked by Shum-AI on the phone. Under the name "
+        details = [f"Booked by RainCheck on the phone. Under the name "
                    f"{pending.get('booking_name') or 'a guest'}."]
     if party:
         details.append(f"Party of {int(float(party))}.")
