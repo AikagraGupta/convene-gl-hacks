@@ -7,6 +7,7 @@
 # Runtime state
 bridge/pending_call.json
 places_cache.json
+places_cuisine_cache.json
 call_log/
 *.wav
 *.mp3

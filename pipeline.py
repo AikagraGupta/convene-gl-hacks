@@ -1017,6 +1017,10 @@ def render_constraints(constraints: dict) -> str:
         who = f" ({esc(item['who'])})" if item.get("who") else ""
         quote = f"\n     \u201c{esc(item['quote'])}\u201d" if item.get("quote") else ""
         lines.append(f"\u2022 <b>{esc(item['constraint'])}</b>{who}{quote}")
+    if constraints.get("prefer_cuisines"):
+        lines.append("\u2022 Craving: <b>" + esc_join(constraints["prefer_cuisines"], ", ") + "</b>")
+    if constraints.get("avoid_cuisines"):
+        lines.append("\u2022 Not: <b>" + esc_join(constraints["avoid_cuisines"], ", ") + "</b>")
     for item in constraints.get("vetoed", []):
         times = item.get("times_rejected") or 1
         suffix = f" \u2014 rejected {esc(times)}\u00d7" if times > 1 else ""

@@ -209,6 +209,16 @@ def _km_between(a: tuple[float, float], b: tuple[float, float]) -> float:
     return 2 * 6371.0 * math.asin(math.sqrt(h))
 
 
+def _squash(text: str) -> str:
+    """"shatin", "Sha Tin", "sha-tin" -> "shatin". People do not type spaces."""
+    return re.sub(r"[\s\-_']", "", str(text or "").lower())
+
+
+def _district_pattern(district: str) -> str:
+    """Regex for a district name with optional spaces/hyphens between words."""
+    return r"\b" + r"[\s\-]?".join(re.escape(w) for w in district.lower().split()) + r"\b"
+
+
 def meeting_districts(origins: list[str], limit: int = 6) -> list[str]:
     """Rank meeting points so the WORST journey is as short as possible.
 
@@ -245,9 +255,9 @@ def mentioned_districts(constraints: dict) -> list[str]:
             found.append(name)
 
     for entry in constraints.get("coming_from") or []:
-        place = str((entry or {}).get("place") or "").strip()
+        place = _squash((entry or {}).get("place"))
         for district, _, _, _, _ in DISTRICTS:
-            if district.lower() == place.lower():
+            if _squash(district) == place:
                 note(district)
 
     haystack = " ".join(
@@ -259,7 +269,7 @@ def mentioned_districts(constraints: dict) -> list[str]:
         + [str(constraints.get("summary_line") or "")]
     ).lower()
     for district, _, _, _, _ in DISTRICTS:
-        if re.search(r"\b" + re.escape(district.lower()) + r"\b", haystack):
+        if re.search(_district_pattern(district), haystack):
             note(district)
     return found
 
@@ -268,9 +278,9 @@ def origin_districts(constraints: dict) -> list[str]:
     """Districts people said they are travelling FROM."""
     found: list[str] = []
     for entry in constraints.get("coming_from") or []:
-        place = str((entry or {}).get("place") or "").strip().lower()
+        place = _squash((entry or {}).get("place"))
         for district, _, _, _, _ in DISTRICTS:
-            if district.lower() == place and district not in found:
+            if _squash(district) == place and district not in found:
                 found.append(district)
     return found
 
@@ -325,6 +335,124 @@ def areas_for(constraints: dict) -> list[str]:
     return list(AREAS)
 
 
+# What a cuisine word looks like on an OSM row (cuisine tag or the name).
+_CUISINE_WORDS = {
+    "vietnamese": ["vietnam", "viet", "pho", "banh mi", "bánh mì", "bun bo", "越南", "越式"],
+    "thai": ["thai", "泰"],
+    "japanese": ["japan", "sushi", "ramen", "izakaya", "udon", "yakitori", "donburi", "日本", "壽司"],
+    "korean": ["korea", "bibimbap", "韓"],
+    "chinese": ["chinese", "cantonese", "sichuan", "szechuan", "dim sum", "dumpling",
+                "noodle", "hot pot", "hotpot", "shanghai", "hunan", "beijing", "yunnan"],
+    "sichuan": ["sichuan", "szechuan", "mala"],
+    "cantonese": ["cantonese", "dim sum", "roast", "cha chaan teng"],
+    "hotpot": ["hot pot", "hotpot"],
+    "indian": ["india", "curry", "tandoor"],
+    "italian": ["italian", "pizza", "pasta", "trattoria"],
+    "pizza": ["pizza"],
+    "burger": ["burger"],
+    "mexican": ["mexic", "taco", "burrito"],
+    "middle eastern": ["middle east", "lebanese", "turkish", "persian", "falafel", "kebab", "shawarma"],
+    "french": ["french", "bistro"],
+    "western": ["western", "american", "steak", "burger"],
+    "vegetarian": ["vegetarian", "vegan"],
+    "seafood": ["seafood", "fish"],
+    "malaysian": ["malaysia", "laksa"],
+    "indonesian": ["indonesia"],
+    "singaporean": ["singapore"],
+    "taiwanese": ["taiwan"],
+}
+_FILLER = re.compile(r"\b(food|cuisine|restaurants?|place|places|dishes|something|some|style)\b", re.I)
+
+
+def cuisine_terms(wanted: list) -> list[str]:
+    """Search terms for the cuisines the chat asked for ("Vietnamese food", "pho")."""
+    terms: list[str] = []
+    for raw in wanted or []:
+        text = _FILLER.sub(" ", str(raw or "").lower()).strip()
+        if not text:
+            continue
+        words = [text]
+        for key, synonyms in _CUISINE_WORDS.items():
+            if key in text or any(syn in text for syn in synonyms):
+                words += [key] + synonyms
+        for word in words:
+            word = word.strip()
+            if (len(word) >= 3 or not word.isascii()) and word not in terms:
+                terms.append(word)
+    return terms
+
+
+def cuisine_match(row: dict, terms: list[str]) -> bool:
+    if not terms:
+        return False
+    hay = " ".join(str(row.get(k) or "") for k in ("cuisine", "descriptor", "name")).lower()
+    return any(re.search(_term_pattern(t), hay) for t in terms)
+
+
+def _term_pattern(term: str) -> str:
+    """"viet" is a prefix ("vietnamese"); "pho" is a word (not "phoenix")."""
+    if not term.isascii():
+        return re.escape(term)
+    tail = r"(?![a-z])" if len(term) <= 4 else ""
+    return r"(?<![a-z])" + re.escape(term) + tail
+
+
+CUISINE_CACHE_PATH = Path(__file__).resolve().parent / "places_cuisine_cache.json"
+
+
+def search_cuisine(constraints: dict) -> list[dict]:
+    """Every place in Hong Kong matching the cuisine the chat asked for.
+
+    The area cache is capped at 400 rows per bounding box and does not cover
+    the whole territory, so a specific cuisine can be almost absent from it:
+    OSM has 69 Vietnamese places in Hong Kong (15 with a phone number) while
+    the area cache held 14 (1 callable). One territory-wide query filtered by
+    cuisine is small and fast, so run it whenever the chat names a cuisine,
+    and cache it per cuisine. Like every other source here: any failure is [].
+    """
+    terms = cuisine_terms(constraints.get("prefer_cuisines") or [])
+    if not terms:
+        return []
+    key = "|".join(sorted(terms))
+    try:
+        cache = json.loads(CUISINE_CACHE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    hit = cache.get(key) or {}
+    if hit.get("rows") and time.time() - float(hit.get("at") or 0) < CACHE_MAX_AGE_SECONDS:
+        return [dict(r) for r in hit["rows"]]
+
+    ascii_terms = [t for t in terms if t.isascii()]
+    cjk_terms = [t for t in terms if not t.isascii()]
+    def ql(term: str) -> str:
+        # Regex-escape for an Overpass QL string: metacharacters only, never
+        # spaces ("\\ " is not a valid escape inside QL quotes), and no quotes.
+        return re.sub(r'([.^$*+?()\[\]{}|\\])', r'\\\1', term).replace('"', "")
+
+    tag_re = "|".join(ql(t) for t in ascii_terms)
+    name_re = "|".join([f"(^|[^a-z]){ql(t)}" for t in ascii_terms] + [ql(t) for t in cjk_terms])
+    query = (
+        '[out:json][timeout:40];area["ISO3166-1"="HK"]->.hk;('
+        f'nwr["amenity"~"^(restaurant|fast_food|cafe)$"]["cuisine"~"{tag_re}",i](area.hk);'
+        f'nwr["amenity"~"^(restaurant|fast_food|cafe)$"]["name"~"{name_re}",i](area.hk);'
+        ');out center tags 300;'
+    )
+    rows = []
+    for element in _fetch_overpass(query):
+        row = _row_from_element(element)
+        if row and cuisine_match(row, terms):
+            rows.append(row)
+    if rows:
+        cache[key] = {"at": time.time(), "rows": rows}
+        try:
+            CUISINE_CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+        print(f"[places] cuisine search: {len(rows)} places, "
+              f"{sum(1 for r in rows if r.get('phone'))} callable")
+    return rows
+
+
 def relevance_rank(rows: list[dict], constraints: dict) -> list[dict]:
     """Re-rank an existing pool against the districts the chat named.
 
@@ -343,11 +471,19 @@ def relevance_rank(rows: list[dict], constraints: dict) -> list[dict]:
     fair_rank = {name: index for index, name in enumerate(fair)}
     spine = {"central", "sheung wan", "wan chai", "causeway bay", "admiralty",
              "tsim sha tsui", "jordan", "mong kok", "yau ma tei"}
+    # The cuisine the group asked for outranks geography. "Vietnamese" a few
+    # MTR stops further away beats a noodle shop next door: before this, the
+    # ranking never looked at cuisine, cut the pool to 60 by phone + area, and
+    # every Vietnamese place was gone before the model saw a single one.
+    wanted = cuisine_terms(constraints.get("prefer_cuisines") or [])
+    avoided = cuisine_terms(constraints.get("avoid_cuisines") or [])
 
     def score(row: dict) -> tuple:
         area = str(row.get("area") or "").lower()
         return (
             bool(row.get("phone")),
+            cuisine_match(row, wanted),
+            not cuisine_match(row, avoided),
             area in destinations,                       # they decided
             -fair_rank.get(area, 99) if fair else 0,    # else: fairest first
             area in spine,

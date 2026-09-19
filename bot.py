@@ -407,6 +407,11 @@ def handle_decide(tg: Telegram, chat_id: int, state: ChatState) -> None:
         # relevance_rank left 1 of 15 Sha Tin rows alive -- indistinguishable
         # from "there are no restaurants near Sha Tin".
         osm_rows = places.search_places(areas=wanted_areas, limit=None)
+        # The area pool can miss a cuisine almost entirely; add a
+        # territory-wide search for whatever the group is craving.
+        cuisine_rows = places.search_cuisine(constraints)
+        if cuisine_rows:
+            osm_rows = places.dedupe_and_rank(osm_rows + cuisine_rows)
         exa_rows = exa_search.search(constraints)
         candidates = places.relevance_rank(
             exa_search.merge(osm_rows, exa_rows), constraints
