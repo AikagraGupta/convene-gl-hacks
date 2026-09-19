@@ -130,6 +130,34 @@ def run() -> Suite:
     s.eq("keyword path counts the veto twice", out["vetoed"][0]["times_rejected"], 2)
     s.eq("keyword path finds the travel origin", out["coming_from"][0]["place"], "Sha Tin")
 
+    # Real group rehearsal: the first Thai suggestion was superseded by an
+    # agreed salad, a chain was vetoed, and a third commuter must not vanish.
+    rehearsal = """Kai: Six people want Thai food in Central around 7:30
+pqwer: i wanna eat mcdonalds
+pqwer: i changed my mind
+Jenny: no mcdonald
+Jenny: maybe salad?
+Kai: okay salad
+Kai: im coming from central
+pqwer: ok im coming from kennedy town
+Jenny: i am in Sheung Shui"""
+    read = pipeline.keyword_constraints(rehearsal)
+    s.eq("worded headcount is understood", read["party_size"], 6)
+    s.eq("bare clock time is preserved", read["when_text"], "around 7:30")
+    s.eq("later agreed food supersedes the initial suggestion", read["prefer_cuisines"], ["salad"])
+    s.eq("agreed food appears in the rendered summary", read["soft"][0]["constraint"], "salad")
+    s.eq("explicit chain rejection becomes a veto", read["vetoed"][0]["thing"], "mcdonalds")
+    s.eq("third commuter is attributed correctly", read["coming_from"][-1],
+         {"who": "Jenny", "place": "Sheung Shui"})
+    s.eq("known headcount and time need no follow-up", read["open_questions"], [])
+    sparse_model = pipeline._empty_constraints("model missed a few literal facts")
+    sparse_model["source"] = "gemini"
+    sparse_model["coming_from"] = [{"who": "Kai", "place": "Central"}]
+    merged = pipeline._supplement_explicit_facts(sparse_model, rehearsal)
+    s.eq("explicit veto survives a model omission", merged["vetoed"][0]["thing"], "mcdonalds")
+    s.eq("explicit third origin survives a model omission", merged["coming_from"][-1]["place"], "Sheung Shui")
+    s.contains("later salad agreement survives a model omission", merged["prefer_cuisines"], "salad")
+
     # Regression: money and party size must not share one sanity range, or
     # every real HK$300 budget is silently discarded.
     s.eq("budget of 300 survives (party-size cap would have eaten it)",

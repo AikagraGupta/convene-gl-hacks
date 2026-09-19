@@ -77,6 +77,7 @@ AREAS: dict[str, tuple[float, float, float, float]] = {
     "kowloon_south": (22.290, 114.160, 22.325, 114.200),
     "kowloon_east": (22.300, 114.200, 22.340, 114.240),
     "sha_tin": (22.365, 114.170, 22.400, 114.210),
+    "north_district": (22.495, 114.110, 22.525, 114.150),
     "tseung_kwan_o": (22.300, 114.250, 22.330, 114.280),
 }
 
@@ -99,6 +100,7 @@ DISTRICTS: list[tuple[str, float, float, float, float]] = [
     ("Hung Hom", 22.296, 114.180, 22.312, 114.196),
     ("Kwun Tong", 22.305, 114.220, 22.330, 114.240),
     ("Sha Tin", 22.365, 114.170, 22.400, 114.210),
+    ("Sheung Shui", 22.500, 114.120, 22.520, 114.140),
     ("Tseung Kwan O", 22.300, 114.250, 22.330, 114.280),
 ]
 
@@ -116,6 +118,7 @@ DISTRICT_TO_AREA: dict[str, str] = {
     "Hung Hom": "kowloon_south",
     "Kwun Tong": "kowloon_east",
     "Sha Tin": "sha_tin", "Tai Wai": "sha_tin", "Fo Tan": "sha_tin",
+    "Sheung Shui": "north_district",
     "Tseung Kwan O": "tseung_kwan_o",
 }
 

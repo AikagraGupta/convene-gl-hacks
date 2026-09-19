@@ -335,6 +335,11 @@ Rules:
   reach the poll.
 - SOFT is only for genuine wants: a cuisine someone fancies, a vibe, a price hope.
 - A dish rejected two or more separate times is a veto, even if nobody used the word.
+- An explicit "no X" or "not X" is also a veto after one rejection. Do not drop it
+  because someone wanted X earlier.
+- Read the sequence: when someone accepts a later food suggestion, distinguish that
+  from their earlier preference. Quote the later agreement; do not present an old
+  idea as the current group choice.
 - "coming from X" is a travel constraint, not a location preference. Record the origin, not a district to search.
 - If the group never said how many people or when, leave those null. Do not invent them.
 - when_text must contain an actual CLOCK TIME, because it gets said to a restaurant on the
@@ -393,7 +398,7 @@ def extract_constraints(chat_text: str, known: str = "") -> dict:
         print("[pipeline] falling back to keyword extraction (no model reachable)")
         return keyword_constraints(chat_text)
 
-    return _normalise_constraints(parsed, provider)
+    return _supplement_explicit_facts(_normalise_constraints(parsed, provider), chat_text)
 
 
 def _empty_constraints(note: str) -> dict:
@@ -566,7 +571,7 @@ HK_PLACES = [
     "Central", "Sheung Wan", "Wan Chai", "Causeway Bay", "Admiralty", "North Point",
     "Quarry Bay", "Tai Koo", "Sai Ying Pun", "Kennedy Town", "Aberdeen", "Stanley",
     "Tsim Sha Tsui", "Jordan", "Mong Kok", "Yau Ma Tei", "Prince Edward", "Sham Shui Po",
-    "Kowloon Tong", "Kwun Tong", "Hung Hom", "Sha Tin", "Tai Wai", "Tai Po", "Fo Tan",
+    "Kowloon Tong", "Kwun Tong", "Hung Hom", "Sha Tin", "Sheung Shui", "Tai Wai", "Tai Po", "Fo Tan",
     "Tseung Kwan O", "Tsuen Wan", "Yuen Long", "Tuen Mun", "Discovery Bay", "Lantau",
 ]
 DIET_PATTERNS = [
@@ -574,7 +579,13 @@ DIET_PATTERNS = [
     (r"\b(vegetarian|vegan|pescatarian|halal|kosher)\b", "{1}"),
     (r"\b(lactose|gluten)[- ]?(intolerant|free)\b", "{1}-free"),
 ]
-VETO_PATTERNS = r"\b(?:not|no|no more|nope|anything but|anywhere but|nothing but|please no|never|sick of|bored of|over)\s+(?:the\s+|any\s+|more\s+)?(hotpot|hot pot|sushi|ramen|pizza|indian|thai|korean|bbq|dim sum|italian|burgers?|steak|japanese|mexican|vietnamese)\b"
+VETO_PATTERNS = r"\b(?:not|no|no more|nope|anything but|anywhere but|nothing but|please no|never|sick of|bored of|over)\s+(?:the\s+|any\s+|more\s+)?(hotpot|hot pot|sushi|ramen|pizza|indian|thai|korean|bbq|dim sum|italian|burgers?|steak|japanese|mexican|vietnamese|mcdonald'?s?)\b"
+FOOD_MENTIONS = {
+    "salad": r"salads?", "thai": r"thai(?: food)?", "mcdonalds": r"mcdonald'?s?",
+    "pizza": r"pizza", "sushi": r"sushi", "hotpot": r"hot\s?pot",
+    "ramen": r"ramen", "burgers": r"burgers?", "dim sum": r"dim sum",
+    "korean": r"korean(?: food)?", "indian": r"indian(?: food)?",
+}
 
 
 def keyword_constraints(chat_text: str) -> dict:
@@ -587,13 +598,22 @@ def keyword_constraints(chat_text: str) -> dict:
     def speaker(line: str) -> str:
         return line.split(":", 1)[0].strip() if ":" in line else ""
 
-    party = re.search(r"\b(?:we(?:'re| are)|there(?:'s| are)|table for|party of|book for)\s+(\d{1,2})\b", lower)
+    party = re.search(r"\b(?:we(?:'re| are)|there(?:'s| are)|table for|party of|book for)\s+(\d{1,2})\b|\b(\d{1,2})\s+(?:people|of us|pax)\b", lower)
     if party:
-        out["party_size"] = _clean_int(party.group(1))
+        out["party_size"] = _clean_int(party.group(1) or party.group(2))
+    else:
+        for word, number in _WORD_NUMBERS.items():
+            if re.search(r"\b" + word + r"\s+(?:people|of us|pax)\b", lower):
+                out["party_size"] = number
+                break
 
     when = re.search(r"\b((?:to(?:night|morrow)|fri(?:day)?|sat(?:urday)?|sun(?:day)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?)(?:\s+at)?\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?)", lower)
     if when:
         out["when_text"] = when.group(1).strip()
+    else:
+        when = re.search(r"\b((?:at|around|about|by)\s+\d{1,2}:\d{2}(?:\s*(?:am|pm))?)\b", lower)
+        if when:
+            out["when_text"] = when.group(1).strip()
 
     budget = re.search(r"(?:under|below|max|up to|around|about|\$|hkd?\s*)\s*(\d{2,4})\s*(?:/|per\s*)?(?:head|pax|person|each)?", lower)
     if budget:
@@ -615,15 +635,42 @@ def keyword_constraints(chat_text: str) -> dict:
         for match in re.finditer(VETO_PATTERNS, line.lower()):
             counts.setdefault(match.group(1).replace("hot pot", "hotpot"), []).append(line.strip())
     for thing, quotes in counts.items():
+        if thing.startswith("mcdonald"):
+            thing = "mcdonalds"
         out["vetoed"].append({"thing": thing, "times_rejected": len(quotes), "quote": quotes[0]})
         out["avoid_cuisines"].append(thing)
     # Rejected twice or more without anyone using the word "veto" is still a
     # veto. Groups do not announce their vetoes; they just keep saying no.
     out["vetoed"].sort(key=lambda v: v["times_rejected"], reverse=True)
 
+    # Follow the conversation, not just the first food mentioned. An explicit
+    # "okay salad" can supersede an earlier "want Thai", while "no McDonald's"
+    # removes that choice even if somebody proposed it first. These are soft
+    # preferences, never dietary guarantees or proof a venue serves the dish.
+    suggestions: dict[str, dict] = {}
+    agreed_food = None
+    for line in lines:
+        low = line.lower()
+        for food, pattern in FOOD_MENTIONS.items():
+            if not re.search(r"\b(?:" + pattern + r")\b", low):
+                continue
+            if re.search(r"\b(?:not|no|avoid|never|don'?t want|anything but)\s+(?:the\s+)?(?:" + pattern + r")\b", low):
+                continue
+            if not re.search(r"\b(?:want|wanna|prefer|maybe|how about|okay|ok|let'?s|lets|sure)\b", low):
+                continue
+            suggestions[food] = {"constraint": food, "who": speaker(line), "quote": line.strip()}
+            if re.search(r"\b(?:okay|ok|let'?s|lets)\b", low):
+                agreed_food = food
+    banned = {v["thing"] for v in out["vetoed"]}
+    preferred = [agreed_food] if agreed_food and agreed_food not in banned else list(suggestions)
+    for food in preferred:
+        if food not in banned:
+            out["soft"].append(suggestions[food])
+            out["prefer_cuisines"].append(food)
+
     for line in lines:
         for place in HK_PLACES:
-            if re.search(r"\b(?:from|coming from|leaving)\s+" + re.escape(place.lower()), line.lower()):
+            if re.search(r"\b(?:from|coming from|leaving|i(?:'m| am) (?:in|at|from))\s+" + re.escape(place.lower()) + r"\b", line.lower()):
                 out["coming_from"].append({"who": speaker(line), "place": place})
 
     if out["party_size"] is None:
@@ -638,10 +685,43 @@ def keyword_constraints(chat_text: str) -> dict:
         bits.append(out["when_text"])
     if out["hard"]:
         bits.append(f"{len(out['hard'])} hard constraints")
+    if out["prefer_cuisines"]:
+        bits.append(f"prefers {', '.join(out['prefer_cuisines'])}")
     if out["vetoed"]:
         bits.append(f"vetoed {', '.join(v['thing'] for v in out['vetoed'])}")
     out["summary_line"] = ", ".join(bits) or "keyword pass found nothing definite"
     return out
+
+
+def _supplement_explicit_facts(model: dict, chat_text: str) -> dict:
+    """Keep literal rejections and travel origins even when the model misses one.
+
+    The keyword pass is deliberately narrow: it may add facts with a direct
+    quote, but must not replace the model's interpretation of ambiguous chat.
+    """
+    literal = keyword_constraints(chat_text)
+    if model.get("party_size") is None and literal["party_size"] is not None:
+        model["party_size"] = literal["party_size"]
+    seen_vetoes = {_norm(v.get("thing", "")) for v in model["vetoed"]}
+    for item in literal["vetoed"]:
+        key = _norm(item["thing"])
+        if key not in seen_vetoes:
+            model["vetoed"].append(item)
+            seen_vetoes.add(key)
+        if key not in {_norm(v) for v in model["avoid_cuisines"]}:
+            model["avoid_cuisines"].append(item["thing"])
+    seen_people = {_norm(v.get("who", "")) for v in model["coming_from"] if v.get("who")}
+    for item in literal["coming_from"]:
+        if _norm(item["who"]) not in seen_people:
+            model["coming_from"].append(item)
+            seen_people.add(_norm(item["who"]))
+    for item in literal["soft"]:
+        food = _norm(item["constraint"])
+        if food and not any(food in _norm(v.get("constraint", "")) for v in model["soft"]):
+            model["soft"].append(item)
+        if food and food not in {_norm(v) for v in model["prefer_cuisines"]}:
+            model["prefer_cuisines"].append(item["constraint"])
+    return model
 
 
 # ---------------------------------------------------------------------------

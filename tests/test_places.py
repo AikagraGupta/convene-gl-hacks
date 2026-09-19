@@ -255,6 +255,12 @@ def run() -> Suite:
     s.check("the cross-harbour spine is searched too",
             all(a in areas for a in places.SPINE_AREAS),
             "'coming from X' is a travel constraint, not a request to eat in X")
+    north = {"coming_from": [{"who": "Jenny", "place": "Sheung Shui"}],
+             "hard": [], "soft": [], "vetoed": [], "open_questions": [], "summary_line": ""}
+    s.eq("Sheung Shui is recognised as an origin", places.origin_districts(north), ["Sheung Shui"])
+    s.contains("northern origin contributes its search area", places.areas_for(north), "north_district")
+    s.eq("Sheung Shui coordinates receive the right label",
+         places._district_for(22.511, 114.131), "Sheung Shui")
 
     free_text = {"coming_from": [], "hard": [{"constraint": "somewhere in Mong Kok"}],
                  "soft": [], "vetoed": [], "open_questions": [], "summary_line": ""}
