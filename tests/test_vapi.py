@@ -44,6 +44,7 @@ def run() -> Suite:
                "chat_id": -100, "dial_number": "+85260894121", "demo_override": True,
                "restaurant_name": "Example", "party_size": 6, "when_text": "19:30",
                "booking_name": "Kai", "negotiation_brief": "under HK$200",
+               "callback_number": "+85260001111",
                "negotiation": {"requirements": ["Vegetarian meal available"]}}
     with patch.dict(os.environ, {"VAPI_API_KEY": "test-key", "VAPI_PHONE_NUMBER_ID": phone_id,
                                "VAPI_ASSISTANT_ID": assistant_id, "DEMO_PHONE": "+85260894121"}):
@@ -71,6 +72,7 @@ def run() -> Suite:
         s.eq("Vapi uses the configured assistant", payload["assistantId"], assistant_id)
         s.check("private identities are absent from call variables", "private" not in json.dumps(payload).lower())
         s.contains("relevant requirement reaches the agent", json.dumps(payload), "Vegetarian meal")
+        s.eq("configured callback number reaches the agent", payload["assistantOverrides"]["variableValues"]["callback_number"], "+85260001111")
         s.check("budget is not passed to the inquiry agent",
                 "approved_limits" not in payload["assistantOverrides"]["variableValues"])
         s.contains("agent asks whether a deposit is required", setup_vapi.SYSTEM_PROMPT,

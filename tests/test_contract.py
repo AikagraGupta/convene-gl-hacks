@@ -160,8 +160,8 @@ def run() -> Suite:
             "I'm an AI assistant" in AGENT_DOC)
     s.check("the prompt forbids implying it is a person",
             "Never imply you are a person" in AGENT_DOC)
-    s.check("the prompt forbids inventing a phone number",
-            "Never invent a phone number" in AGENT_DOC)
+    s.check("the prompt forbids inventing or altering a phone number",
+            "Never invent, alter" in AGENT_DOC)
     s.check("the prompt tells it not to push after a refusal",
             "do not push" in AGENT_DOC.lower())
 

@@ -113,6 +113,7 @@ def call_payload(pending: dict, phone: dict) -> dict:
                 "party_size": str(pending.get("party_size") or "unknown"),
                 "when_text": str(pending.get("when_text") or "time not stated")[:100],
                 "booking_name": str(pending.get("booking_name") or "a guest")[:60],
+                "callback_number": str(pending.get("callback_number") or "")[:40],
                 "requirements": requirements_text[:500] or "none stated",
             }
         },
