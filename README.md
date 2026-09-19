@@ -1,5 +1,16 @@
 # convene
 
+## Try the interactive rehearsal
+
+Run `python demo.py` and open <http://127.0.0.1:8090/>. Save a private budget and
+dietary need, then try the venue's first and revised offers. You can also enter
+your own terms to see exactly which checks pass, fail, or need clarification.
+
+This credential-free local rehearsal uses the real private-input store and
+negotiation rules. The group chat and venue dialogue are fictional; it does not
+place a call, send a message, or make a reservation. Reset clears the temporary
+rehearsal data.
+
 **An agent that lives in your friends' group chat, reads the argument, and then actually books the thing.**
 
 Dinner was the first case. The problem is not dinner. It is that six people in a
