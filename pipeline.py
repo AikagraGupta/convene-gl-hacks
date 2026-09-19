@@ -224,7 +224,7 @@ def _parse_json(text: str) -> dict:
     The one that cost us a live demo: gemini-3.5-flash returns a complete,
     correct JSON object and then appends a STRAY EXTRA CLOSING BRACE.
     json.loads() rejects the whole thing with "Extra data: line 42 column 1",
-    and a greedy `\{.*\}` regex is no help either because it happily matches
+    and a greedy `{.*}` regex is no help either because it happily matches
     through the stray brace to the last one in the string. Both salvage paths
     failed, extraction fell through to the slower fallback vendor, and the only
     symptom was a 53-second /decide.
