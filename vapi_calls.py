@@ -15,7 +15,7 @@ from envlite import env, env_flag, env_list
 import places
 
 BASE = "https://api.vapi.ai"
-PROMPT_MARKER = "CONVENE_INQUIRY_V1"
+PROMPT_MARKER = "CONVENE_INQUIRY_V2"
 E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 
 
@@ -114,7 +114,6 @@ def call_payload(pending: dict, phone: dict) -> dict:
                 "when_text": str(pending.get("when_text") or "time not stated")[:100],
                 "booking_name": str(pending.get("booking_name") or "a guest")[:60],
                 "requirements": requirements_text[:500] or "none stated",
-                "approved_limits": str(pending.get("negotiation_brief") or "No flexibility was approved")[:500],
             }
         },
     }

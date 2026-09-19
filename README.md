@@ -184,14 +184,18 @@ group and the restaurant offers different terms on the call.
 3. Run `/decide`, vote, then `/close`. The approval card shows the public
    delegation and states that private requirements also apply. A human
    approves the call and dials on their phone as before.
-4. The ElevenLabs agent asks staff for a time, all-in price, deposit and
-   requirements. Its `evaluate_offer` client tool checks each offer in code.
+4. The ElevenLabs agent asks staff for a time, any deposit and relevant
+   requirements, without asking for a per-person meal price. Its
+   `evaluate_offer` client tool checks each offer in code. If staff does not
+   volunteer a price, a budget-limited offer cannot be verified or booked.
    The call desk displays each check. An offer outside the limits prompts one
    counteroffer; missing facts prompt clarification. The tool's "accept" only
    permits asking staff to hold those exact terms. Final reported terms must
    match the checked offer before the group sees a confirmed booking.
-5. In a private-input plan the group receives a generic live status and final
-   booking result, without the call transcript or staff notes. The operator
+5. For public calls the group receives the complete transcript after the call,
+   whether or not a table was booked. In a private-input plan the group receives
+   a generic live status and final booking result, without the call transcript
+   or staff notes. The operator
    and voice provider still see the combined requirements and local call log.
 
 `/private new` starts another outing and deletes the prior event's saved

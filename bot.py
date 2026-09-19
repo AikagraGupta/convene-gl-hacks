@@ -610,7 +610,7 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
     if state.negotiation_limits and state.approval_payload["call_provider"] == "vapi":
         limits = state.negotiation_limits
         card.append(f"• Group boundaries: {negotiation.clock(limits['start'])}–{negotiation.clock(limits['end'])}, "
-                    f"up to HK${limits['budget']:g}/person including charges; no deposits. Vapi will only inquire.")
+                    f"up to HK${limits['budget']:g}/person. No deposits authorised.")
     elif state.negotiation_limits:
         limits = state.negotiation_limits
         card.append(f"• May negotiate: {negotiation.clock(limits['start'])}–{negotiation.clock(limits['end'])}, "
@@ -620,7 +620,7 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
     if private["inputs"]:
         card.append("• Saved private requirements also apply. Identities, private limits and the call transcript will not be posted to this group.")
     if state.approval_payload["call_provider"] == "vapi":
-        card.append("• Vapi will ask about availability and terms. It will not make or claim a reservation in this version.")
+        card.append("• Vapi will ask about availability and any deposit, not menu prices. It will not make or claim a reservation in this version.")
     else:
         card.append("• This approves the displayed negotiation limits for the call. Staff must still confirm a matching offer.")
     card.append("")

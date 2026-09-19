@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from harness import Suite
 import vapi_calls
+import setup_vapi
 from bridge import server
 
 
@@ -70,6 +71,12 @@ def run() -> Suite:
         s.eq("Vapi uses the configured assistant", payload["assistantId"], assistant_id)
         s.check("private identities are absent from call variables", "private" not in json.dumps(payload).lower())
         s.contains("relevant requirement reaches the agent", json.dumps(payload), "Vegetarian meal")
+        s.check("budget is not passed to the inquiry agent",
+                "approved_limits" not in payload["assistantOverrides"]["variableValues"])
+        s.contains("agent asks whether a deposit is required", setup_vapi.SYSTEM_PROMPT,
+                   "whether a deposit is")
+        s.contains("agent does not ask for a meal price", setup_vapi.SYSTEM_PROMPT,
+                   "Do not ask for a price")
         s.eq("transcript keeps staff and agent roles", vapi_calls.turns({"artifact": {"messages": [
             {"role": "bot", "message": "Hello"}, {"role": "user", "message": "Yes"},
             {"role": "system", "message": "internal"}]}}),
@@ -108,11 +115,14 @@ def run() -> Suite:
                                   "live_message_id": 5, "live_turns": []})
             server.monitor_vapi_call("call-1")
             s.eq("completed call closes local state", server.read_pending()["status"], "done")
-            s.eq("completed call posts one group result", send.call_count, 1)
+            s.eq("completed call posts result and full transcript", send.call_count, 2)
             s.contains("Telegram live transcript includes Vapi's bot turn",
                        str(edit.call_args_list), "I'm an AI assistant")
-            s.contains("group result does not assert a booking", send.call_args.args[1],
+            s.contains("group result does not assert a booking", send.call_args_list[0].args[1],
                        "No reservation is verified")
+            s.contains("final transcript includes staff even without a reservation",
+                       send.call_args_list[1].args[1], "We have a table.")
+            s.check("transcript delivery is recorded", server.read_pending()["transcript_sent"])
             send.reset_mock()
             edit.reset_mock()
             server.write_pending({**pending, "status": "vapi_calling", "vapi_call_id": "call-2",
@@ -121,4 +131,30 @@ def run() -> Suite:
             s.check("private transcript stays out of Telegram",
                     "We have a table" not in str(edit.call_args_list)
                     and "We have a table" not in str(send.call_args_list))
+        long_turns = [{"source": "user", "message": "R&B <test> " * 900}]
+        chunks = server.transcript_messages(pending, long_turns)
+        s.check("long transcript is split within Telegram limits",
+                len(chunks) > 1 and all(len(chunk.encode("utf-16-le")) // 2 < 4096
+                                        for chunk in chunks))
+        s.check("transcript HTML escapes venue speech",
+                all("<test>" not in chunk for chunk in chunks)
+                and "&lt;test&gt;" in "".join(chunks))
+        s.contains("a call with no speech still has a transcript notice",
+                   server.transcript_messages(pending, [])[0], "No speech transcript")
+        # The browser/ElevenLabs path uses the same completion rule: a declined
+        # call still yields its transcript, not just a status message.
+        with TemporaryDirectory() as directory, \
+             patch.object(server, "PENDING_PATH", Path(directory) / "pending.json"), \
+             patch.object(server, "collect_outcome", return_value=({"status": "declined"}, "transcript (derived)")), \
+             patch.object(server, "archive_call", return_value=Path(directory) / "call.json"), \
+             patch.object(server, "send_telegram", return_value=True) as send:
+            server.write_pending({**pending, "status": "dialing", "call_provider": "elevenlabs",
+                                  "negotiation": None,
+                                  "live_turns": [{"source": "user", "message": "Sorry, we're full."}]})
+            code, result = dispatch("/outcome")
+            s.eq("declined browser call completes", code, 200)
+            s.check("declined browser call posts its transcript",
+                    send.call_count == 2 and "we're full" in send.call_args_list[1].args[1])
+            s.check("declined browser call records transcript delivery",
+                    server.read_pending()["transcript_sent"])
     return s

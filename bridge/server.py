@@ -118,6 +118,59 @@ def send_telegram(chat_id, text: str) -> bool:
         return False
 
 
+def transcript_messages(pending: dict, turns: list[dict]) -> list[str]:
+    """Make a complete, HTML-safe transcript in Telegram-sized messages."""
+    name = str(pending.get("restaurant_display") or pending.get("restaurant_name") or "the venue")[:100]
+    title = f"<b>Call transcript — {esc(name)}</b>"
+    # Leave space for the title and part numbers. Telegram counts UTF-16 units.
+    body_limit = 2800
+    bodies: list[str] = []
+    body = ""
+
+    def units(value: str) -> int:
+        return len(value.encode("utf-16-le")) // 2
+
+    def add(line: str) -> None:
+        nonlocal body
+        joined = f"{body}\n\n{line}" if body else line
+        if body and units(joined) > body_limit:
+            bodies.append(body)
+            body = line
+        else:
+            body = joined
+
+    for turn in turns:
+        said = str(turn.get("message") or "").strip()
+        if not said:
+            continue
+        speaker = "🏪 Venue: " if turn.get("source") == "user" else "🤖 Convene: "
+        line = speaker
+        for char in said:
+            encoded = esc(char)
+            if units(line + encoded) > body_limit:
+                add(line)
+                line = speaker + "(continued) "
+            line += encoded
+        add(line)
+    if body:
+        bodies.append(body)
+    if not bodies:
+        bodies = ["<i>No speech transcript was returned by the voice provider.</i>"]
+    total = len(bodies)
+    return [f"{title}{f' ({index}/{total})' if total > 1 else ''}\n{part}"
+            for index, part in enumerate(bodies, 1)]
+
+
+def post_transcript(pending: dict, turns: list[dict]) -> bool:
+    """Public calls get a permanent transcript even when no booking was made."""
+    if pending.get("private_mode"):
+        return False  # private inputs can surface in speech; retain the local archive
+    delivered = True
+    for message in transcript_messages(pending, turns):
+        delivered = send_telegram(pending.get("chat_id"), message) and delivered
+    return delivered
+
+
 # --------------------------------------------------------------------------
 # Turning a call into a state transition
 # --------------------------------------------------------------------------
@@ -235,8 +288,9 @@ def render_live(pending: dict, turns: list[dict], finished: bool = False) -> str
     if pending.get("private_mode"):
         return (f"<b>{'Call finished' if finished else 'Checking with the venue'} — {esc(name)}</b>\n"
                 "Private requirements are being checked. The transcript stays on the operator's call desk; only the booking result is shared here.")
-    head = (f"\u2705 <b>Call finished \u2014 {esc(name)}</b>" if finished
-            else f"\U0001f4de <b>On the phone with {esc(name)}\u2026</b>")
+    if finished:
+        return f"✅ <b>Call finished — {esc(name)}</b>\nFull transcript posted separately below."
+    head = f"\U0001f4de <b>On the phone with {esc(name)}\u2026</b>"
 
     # Built by concatenation rather than one big f-string: an escape inside an
     # f-string expression is a syntax error before Python 3.12, and this has to
@@ -337,11 +391,8 @@ def format_outcome(pending: dict, body: dict) -> str:
             lines.append("\n<i>No calendar link: no exact hour was ever said, "
                          "and a guessed one would be worse than none.</i>")
 
-    # NO transcript here. The live message directly above this one was edited
-    # turn by turn as the call happened and already holds the whole
-    # conversation -- printing it again produced two identical walls of text in
-    # a row, and buried the one thing this message exists for: what was
-    # actually booked, and the link that puts it in everyone's calendar.
+    # Keep the outcome concise. The complete transcript is posted separately,
+    # including when staff declined or no reservation was made.
     source = body.get("outcome_source")
     if source == "transcript (derived)":
         # Say where the structured fields came from. The agent's own schema saw
@@ -484,7 +535,9 @@ def monitor_vapi_call(call_id: str) -> None:
             print(f"[bridge] Vapi status check failed: {exc}")
             time.sleep(5)
             continue
-        turns = vapi_calls.turns(call)
+        # The final API snapshot can omit the artifact briefly even though
+        # earlier polls already saw speech. Keep that last known transcript.
+        turns = vapi_calls.turns(call) or last_turns
         if turns != last_turns:
             last_turns = turns
             patch_pending(live_turns=turns)
@@ -498,9 +551,12 @@ def monitor_vapi_call(call_id: str) -> None:
             if current.get("live_message_id"):
                 edit_telegram(current.get("chat_id"), current["live_message_id"],
                               render_live(current, turns, finished=True))
-            archive_call(current, {"provider": "vapi", "call": call})
+            archive_call(current, {"provider": "vapi", "call": call,
+                                   "transcript": turns})
             send_telegram(current.get("chat_id"), format_vapi_result(current, turns))
+            transcript_sent = post_transcript(current, turns)
             patch_pending(status="done", dial=False, live_turns=turns,
+                          transcript_sent=transcript_sent,
                           finished_at=datetime.now(timezone.utc).isoformat())
             print(f"[bridge] Vapi call finished: {call_id}")
             return
@@ -752,6 +808,7 @@ class Handler(BaseHTTPRequestHandler):
             # Close the live message off so it does not sit there saying
             # "live" forever, then post the structured result separately.
             turns = body.get("transcript") or pending.get("live_turns") or []
+            body["transcript"] = turns
             if pending.get("live_message_id"):
                 edit_telegram(pending.get("chat_id"), pending["live_message_id"],
                               render_live(pending, turns, finished=True))
@@ -759,15 +816,18 @@ class Handler(BaseHTTPRequestHandler):
             archived = archive_call(pending, body)
             text = format_outcome(pending, body)
             sent = send_telegram(pending.get("chat_id"), text)
+            transcript_sent = post_transcript(pending, turns)
             patch_pending(
                 dial=False,
                 status="done",
                 outcome=collected,
                 outcome_source=source,
+                transcript_sent=transcript_sent,
                 finished_at=datetime.now(timezone.utc).isoformat(),
             )
             print(f"[bridge] call archived -> {archived}")
             self._json({"ok": True, "telegram_sent": sent,
+                        "transcript_sent": transcript_sent,
                         "archived": archived.name, "outcome_source": source})
 
         elif route == "/amend":
