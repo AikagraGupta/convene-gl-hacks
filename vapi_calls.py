@@ -138,5 +138,5 @@ def turns(call: dict) -> list[dict]:
         {"source": "user" if item.get("role") == "user" else "ai",
          "message": str(item.get("message") or "")}
         for item in messages
-        if item.get("role") in ("user", "assistant") and item.get("message")
+        if item.get("role") in ("user", "assistant", "bot") and item.get("message")
     ]

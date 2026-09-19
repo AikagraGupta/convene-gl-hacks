@@ -71,7 +71,7 @@ def run() -> Suite:
         s.check("private identities are absent from call variables", "private" not in json.dumps(payload).lower())
         s.contains("relevant requirement reaches the agent", json.dumps(payload), "Vegetarian meal")
         s.eq("transcript keeps staff and agent roles", vapi_calls.turns({"artifact": {"messages": [
-            {"role": "assistant", "message": "Hello"}, {"role": "user", "message": "Yes"},
+            {"role": "bot", "message": "Hello"}, {"role": "user", "message": "Yes"},
             {"role": "system", "message": "internal"}]}}),
             [{"source": "ai", "message": "Hello"}, {"source": "user", "message": "Yes"}])
 
