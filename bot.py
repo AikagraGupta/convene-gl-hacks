@@ -60,6 +60,7 @@ BRIDGE_BASE = "http://127.0.0.1:8080"
 API_TIMEOUT = 40
 HISTORY_LIMIT = 200
 NONE_OPTION = "None of these — keep arguing"
+DEMO_THINK_SECONDS = 3
 
 # A deterministic rehearsal scene for tomorrow's demo. It is opt-in through
 # /demo, so ordinary groups continue to use the messages they actually sent.
@@ -408,7 +409,11 @@ def handle_decide(tg: Telegram, chat_id: int, state: ChatState) -> None:
 
     state.deciding = True
     try:
-        tg.send(chat_id, f"Reading the last <b>{len(state.history)}</b> lines…")
+        if state.demo_mode:
+            tg.send(chat_id, "Thinking…")
+            time.sleep(DEMO_THINK_SECONDS)
+        else:
+            tg.send(chat_id, f"Reading the last <b>{len(state.history)}</b> lines…")
 
         # Hand the extractor what it already knows about these people, so a
         # constraint Priya stated in July does not need restating today.
