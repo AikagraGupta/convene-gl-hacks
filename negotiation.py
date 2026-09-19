@@ -46,7 +46,7 @@ def money(value) -> float:
 def parse_command(text: str) -> dict:
     match = re.fullmatch(r"(\d{2}:\d{2}-\d{2}:\d{2})\s+budget\s+(\d+(?:\.\d{1,2})?)", text.strip(), re.I)
     if not match:
-        raise ValueError("Use /negotiate 19:00-20:00 budget 200 (HKD per person). Deposits always need a new approval.")
+        raise ValueError("Use /negotiate 19:00-20:00 budget 200 (HKD per person). Any deposit will be recorded for FPS transfer.")
     start, end = window(match[1])
     return {"start": start, "end": end, "budget": money(match[2])}
 
@@ -69,14 +69,15 @@ def build(when_text: str, party_size: int, public: dict, private: dict, hard: li
     if start > end:
         raise ValueError("The proposed time does not fit all saved requirements. Agree a new /negotiate window, or ask participants to review their private inputs.")
     return {"start": start, "end": end, "budget": budget, "party_size": party_size,
-            "requirements": list(dict.fromkeys(requirements)), "max_deposit": 0, "currency": "HKD"}
+            "requirements": list(dict.fromkeys(requirements)), "max_deposit": None, "currency": "HKD"}
 
 
 def brief(policy: dict) -> str:
     price = f"HK${policy['budget']:g} per person, INCLUDING all mandatory charges" if policy.get("budget") is not None else "not authorised: ask the group to set a budget before committing to any price"
     return (f"Same requested day only. Start between {clock(policy['start'])} and {clock(policy['end'])}. "
-            f"Exactly {policy['party_size']} people. Maximum price: {price}. No deposits authorised. "
-            "Verify these requirements with staff: " + ("; ".join(policy["requirements"]) or "none") + ". "
+            f"Exactly {policy['party_size']} people. Optional price guard: {price}; do not ask staff for menu prices. "
+            "Any deposit is recorded for the group to transfer by FPS. Verify these requirements with staff: "
+            + ("; ".join(policy["requirements"]) or "none") + ". "
             "Call evaluate_offer before accepting ANY offer. Never identify who supplied a requirement.")
 
 
@@ -94,20 +95,28 @@ def evaluate(policy: dict, offer: dict) -> dict:
     for key, label in (("same_day", "Requested day"), ("requirements_met", "Group requirements")):
         value = offer.get(key)
         check(label, "pass" if value is True else "fail" if value is False else "unknown")
-    for key, label, limit in (("price_per_person", "Total price per person", policy.get("budget")), ("deposit_total", "Deposit", 0)):
+    for key, label, limit in (("price_per_person", "Total price per person", policy.get("budget")),
+                              ("deposit_total", "Deposit", policy.get("max_deposit"))):
         try:
-            amount = money(offer.get(key))
-            check(label, "unknown" if limit is None else "pass" if amount <= limit else "fail")
+            value = offer.get(key)
+            # Menu price is optional: the agent never asks for it, and a venue
+            # may confirm a booking without quoting the menu. If staff does
+            # volunteer a price, still enforce the group's optional ceiling.
+            if value is None and key == "price_per_person":
+                continue
+            amount = money(value)
+            check(label, "pass" if limit is None or amount <= limit else "fail")
         except ValueError:
-            check(label, "unknown")
+            if key == "deposit_total":
+                check(label, "unknown")
     currency = offer.get("currency")
     check("Currency", "pass" if currency == "HKD" else "unknown" if currency is None else "fail")
     states = [c["state"] for c in checks]
     action = "counter" if "fail" in states else "clarify" if "unknown" in states else "accept"
     instruction = {
-        "accept": "Within approved limits. You may ask staff to hold this exact offer, then read it back. This check is not a booking confirmation.",
-        "clarify": "Do not commit yet. Ask staff for the unknown fields. If a budget is not authorised, end the call and ask the group to set one.",
-        "counter": "Do not accept. Ask once for an alternative within the approved limits. If unavailable, explain you need group approval and end the call. Never accept a deposit.",
+        "accept": "Within the approved time, headcount, requirements and deposit terms. Ask staff to book this exact offer, then end the call after they confirm.",
+        "clarify": "Ask staff for the missing deposit fact before booking. Do not ask for menu price.",
+        "counter": "Ask once for an alternative start time inside the approved window, then check that offer. Continue until staff books it or clearly declines.",
     }[action]
     return {"action": action, "checks": checks, "instruction": instruction}
 
@@ -117,12 +126,12 @@ def client_tool() -> dict:
         "time": {"type": "string", "description": "Venue's offered start in 24-hour HH:MM; omit if unknown."},
         "party_size": {"type": "integer", "description": "Headcount explicitly accommodated by staff."},
         "same_day": {"type": "boolean", "description": "True only if offer is on the group's requested date."},
-        "price_per_person": {"type": "number", "description": "HKD per person including service charge, minimum spend allocation and mandatory extras. Omit if unknown."},
+        "price_per_person": {"type": "number", "description": "Optional HKD per person if staff volunteers it; never ask for menu price."},
         "deposit_total": {"type": "number", "description": "Total deposit requested. Zero only if staff confirm no deposit."},
         "currency": {"type": "string", "description": "Currency explicitly quoted, e.g. HKD."},
         "requirements_met": {"type": "boolean", "description": "True only when staff confirmed ALL requirements in the brief, or brief has none. Omit if unresolved."},
     }
     return {"type": "client", "name": "evaluate_offer", "expects_response": True,
             "response_timeout_secs": 10,
-            "description": "MANDATORY before accepting any restaurant offer. Checks time, price, deposit and requirements against the approved delegation. Never invent missing fields.",
+            "description": "MANDATORY before asking staff to book an offer. Checks time, headcount, optional price guard, deposit and requirements. Never invent missing fields.",
             "parameters": {"type": "object", "properties": props, "required": []}}

@@ -73,10 +73,15 @@ def run() -> Suite:
         s.check("private identities are absent from call variables", "private" not in json.dumps(payload).lower())
         s.contains("relevant requirement reaches the agent", json.dumps(payload), "Vegetarian meal")
         s.eq("configured callback number reaches the agent", payload["assistantOverrides"]["variableValues"]["callback_number"], "+85260001111")
+        s.eq("approved negotiation reaches the booking agent", payload["assistantOverrides"]["variableValues"]["negotiation_brief"], "under HK$200")
         s.check("budget is not passed to the inquiry agent",
                 "approved_limits" not in payload["assistantOverrides"]["variableValues"])
         s.contains("agent asks whether a deposit is required", setup_vapi.SYSTEM_PROMPT,
                    "whether a deposit is")
+        s.contains("agent asks for an FPS number when needed", setup_vapi.SYSTEM_PROMPT,
+                   "FPS payment number")
+        s.contains("agent ends after a booking confirmation", setup_vapi.SYSTEM_PROMPT,
+                   "end the call immediately")
         s.contains("agent does not ask for a meal price", setup_vapi.SYSTEM_PROMPT,
                    "Do not ask for a price")
         s.eq("transcript keeps staff and agent roles", vapi_calls.turns({"artifact": {"messages": [
@@ -100,23 +105,27 @@ def run() -> Suite:
             s.eq("Vapi mode does not arm the ElevenLabs page", server.read_pending()["dial"], False)
             s.eq("duplicate dial is refused", dispatch("/dial")[0], 409)
             s.eq("only one outbound call was requested", create.call_count, 1)
-        s.contains("Vapi result does not claim a booking", server.format_vapi_result(pending, []),
-                   "No reservation is verified")
+        s.contains("Vapi result reports an unconfirmed call", server.format_vapi_result(pending, []),
+                   "Could not book")
         mismatch_turns = [
-            {"source": "user", "message": "We can hold 5 seats and book 5 people."},
+            {"source": "user", "message": "Sorry, we only have 5 seats at that time."},
         ]
         mismatch_text = server.format_vapi_result(pending, mismatch_turns)
-        s.contains("Vapi explains a smaller hold offer", mismatch_text,
-                   "offered to hold 5 people")
-        s.contains("Vapi explains why the offer was rejected", mismatch_text,
-                   "approved request was for 6")
+        s.contains("Vapi explains a smaller capacity", mismatch_text,
+                   "did not have the requested table")
         s.check("mismatched Vapi hold has no calendar link",
                 "calendar.google.com" not in mismatch_text)
         matching_turns = [
-            {"source": "user", "message": "We can hold 6 seats and there is no deposit."},
+            {"source": "user", "message": "Your reservation is booked for 6 people at 8:00 pm. There is a HK$100 deposit. FPS number is 60894121."},
         ]
         matching_text = server.format_vapi_result(pending, matching_turns)
-        s.contains("matching Vapi hold offers a calendar link", matching_text,
+        s.contains("matching Vapi booking says booked", matching_text,
+                   "Booked")
+        s.contains("matching Vapi booking records the deposit", matching_text,
+                   "Deposit: HK$100")
+        s.contains("matching Vapi booking records FPS", matching_text,
+                   "60894121")
+        s.contains("matching Vapi booking offers a calendar link", matching_text,
                    "calendar.google.com")
         s.contains("calendar link is tappable in Telegram", matching_text,
                    'href=\"https://calendar.google.com')
@@ -124,7 +133,7 @@ def run() -> Suite:
         # and send a result. Vapi's real artifacts label agent turns "bot".
         ended = {"status": "ended", "endedReason": "customer-ended-call", "artifact": {
             "messages": [{"role": "bot", "message": "I'm an AI assistant."},
-                         {"role": "user", "message": "We have a table."}]}}
+                         {"role": "user", "message": "Your table is booked for 6 people at 7:30 pm. No deposit is required."}]}}
         with TemporaryDirectory() as directory, \
              patch.object(server, "PENDING_PATH", Path(directory) / "pending.json"), \
              patch.object(server.vapi_calls, "get_call", return_value=ended), \
@@ -138,10 +147,9 @@ def run() -> Suite:
             s.eq("completed call posts result and full transcript", send.call_count, 2)
             s.contains("Telegram live transcript includes Vapi's bot turn",
                        str(edit.call_args_list), "I'm an AI assistant")
-            s.contains("group result does not assert a booking", send.call_args_list[0].args[1],
-                       "No reservation is verified")
-            s.contains("final transcript includes staff even without a reservation",
-                       send.call_args_list[1].args[1], "We have a table.")
+            s.check("group result asserts the confirmed booking", "Booked" in send.call_args_list[0].args[1])
+            s.contains("final transcript includes staff after booking",
+                       send.call_args_list[1].args[1], "Your table is booked")
             s.check("transcript delivery is recorded", server.read_pending()["transcript_sent"])
             send.reset_mock()
             edit.reset_mock()
@@ -149,8 +157,8 @@ def run() -> Suite:
                                   "live_message_id": 6, "private_mode": True, "live_turns": []})
             server.monitor_vapi_call("call-2")
             s.check("private call transcript is visible in Telegram",
-                    "We have a table" in str(edit.call_args_list)
-                    and "We have a table" in str(send.call_args_list))
+                    "Your table is booked" in str(edit.call_args_list)
+                    and "Your table is booked" in str(send.call_args_list))
         long_turns = [{"source": "user", "message": "R&B <test> " * 900}]
         chunks = server.transcript_messages(pending, long_turns)
         s.check("long transcript is split within Telegram limits",

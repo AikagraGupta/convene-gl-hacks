@@ -157,6 +157,14 @@ def calendar_url(pending: dict, collected: dict | None = None,
         details.append(f"Party of {int(float(party))}.")
     if pending.get("real_number") and not pending.get("demo_override"):
         details.append(f"Restaurant: {pending['real_number']}")
+    if collected.get("deposit_total") is not None:
+        try:
+            deposit = float(collected["deposit_total"])
+            details.append("Deposit: none" if deposit == 0 else f"Deposit to transfer: HK${deposit:g}")
+        except (TypeError, ValueError):
+            pass
+    if collected.get("fps_number"):
+        details.append(f"FPS payment number: {collected['fps_number']}")
     for note in (collected.get("staff_notes"), pending.get("notes")):
         if note:
             details.append(str(note))

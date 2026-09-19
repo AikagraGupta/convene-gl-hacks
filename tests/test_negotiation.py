@@ -41,14 +41,16 @@ def run():
     offer = {"time": "19:45", "party_size": 6, "price_per_person": 150, "deposit_total": 0,
              "currency": "HKD", "same_day": True, "requirements_met": True}
     s.eq("boundary price and all requirements permit a booking request", n.evaluate(policy, offer)["action"], "accept")
-    for key, value in (("time", "20:30"), ("price_per_person", 151), ("deposit_total", 1),
+    for key, value in (("time", "20:30"), ("price_per_person", 151),
                        ("party_size", 5), ("currency", "USD"), ("same_day", False), ("requirements_met", False)):
         s.eq("counteroffer needed for " + key, n.evaluate(policy, {**offer, key: value})["action"], "counter")
     for key in offer:
         partial = {k: v for k, v in offer.items() if k != key}
-        s.eq("unknown " + key + " requires clarification", n.evaluate(policy, partial)["action"], "clarify")
+        expected = "accept" if key == "price_per_person" else "clarify"
+        s.eq("missing " + key + " is handled", n.evaluate(policy, partial)["action"], expected)
     s.eq("a string yes is not a verified requirement", n.evaluate(policy, {**offer, "requirements_met": "yes"})["action"], "clarify")
-    s.eq("without a budget the agent must ask", n.evaluate({**policy, "budget": None}, offer)["action"], "clarify")
+    s.eq("without a budget the agent can still book", n.evaluate({**policy, "budget": None}, offer)["action"], "accept")
+    s.eq("a stated deposit is accepted and recorded", n.evaluate(policy, {**offer, "deposit_total": 80})["action"], "accept")
     s.check("tool waits for a real response", n.client_tool()["expects_response"])
     first, prompt, schema = setup_agent.parse_doc()
     s.eq("voice prompt and page variables match", setup_agent.variables_in(prompt, first), setup_agent.variables_the_page_sends())
@@ -89,7 +91,7 @@ def run():
                          **{k: v for k, v in offer.items() if k not in ("time", "party_size")}}
             s.eq("checked matching final terms may confirm", server.validate_outcome(pending, collected)["status"], "confirmed")
             s.eq("later price change cannot inherit previous approval", server.validate_outcome(pending, {**collected, "price_per_person": 180})["status"], "needs_approval")
-            s.eq("missing final price is not accepted", server.validate_outcome(pending, {**collected, "price_per_person": None})["status"], "needs_approval")
+            s.eq("missing final menu price is accepted", server.validate_outcome(pending, {**collected, "price_per_person": None})["status"], "confirmed")
             s.eq("unchecked voice confirmation is not accepted", server.validate_outcome({**pending, "negotiation_events": []}, collected)["status"], "needs_approval")
             s.eq("amending terms cannot bypass group approval", dispatch("/amend", {"party_size": 4})[0], 409)
             private_inputs.edit(token, 7, {"budget": 100})

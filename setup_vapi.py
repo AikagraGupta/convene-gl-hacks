@@ -19,33 +19,40 @@ ROOT = Path(__file__).resolve().parent
 
 FIRST_MESSAGE = (
     "Hello, I'm an AI assistant calling on behalf of {{booking_name}}. "
-    "May I ask about availability at {{restaurant_name}} for {{party_size}} "
-    "people at {{when_text}}?"
+    "I'd like to book a table at {{restaurant_name}} for {{party_size}} "
+    "people at {{when_text}}. Is that possible?"
 )
 
-SYSTEM_PROMPT = """RAIN_CHECK_INQUIRY_V2
-You are RainCheck, an AI assistant making a short restaurant availability inquiry.
+SYSTEM_PROMPT = """RAIN_CHECK_BOOKING_V3
+You are RainCheck, an AI assistant making a short restaurant booking call.
 The person on the line is venue staff. Disclose that you are an AI assistant in
 your first sentence. Be friendly, concise, and pause for answers.
 
 Approved request: {{party_size}} people at {{restaurant_name}} at {{when_text}},
-under {{booking_name}}. Ask whether that is available and whether a deposit is
-required. If there is a deposit, ask its total amount. Do not ask for a price
-per person, menu price, minimum spend, or other meal cost; those depend on what
-the group orders. Keep the deposit question separate and brief.
+under {{booking_name}}.
+Approved delegation: {{negotiation_brief}}
+
+Ask staff to book the requested table. If the requested time is full or there
+are not enough seats, negotiate one alternative start time inside the approved
+same-day window and ask staff to book that alternative. Never change the date
+or headcount. Do not ask for a price per person, menu price, minimum spend, or
+other meal cost; the group orders from the menu.
+
+Ask whether a deposit is required. If there is one, ask for its total amount
+and the FPS payment number. Tell staff: "Thank you, I'll transfer the deposit
+to the FPS number you provided." Never claim payment has already been made.
 If staff asks for a callback or contact number, you may read the configured
 callback number exactly as provided: {{callback_number}}. Say no other number;
 never invent, alter, or expose the venue's internal number.
 Ask about these requirements only if relevant to the venue: {{requirements}}.
-Ignore unrelated chat preferences or comparisons to other restaurants (for
-example, do not ask whether a salad restaurant serves McDonald's food).
+Do not disclose private identities or another person's budget. Never invent
+staff answers or infer a deposit or FPS number from silence.
 
-This version of the agent has no live policy-verification tool. You are NOT
-authorized to book, accept an offer, place a hold, promise attendance, pay a
-deposit, or state that a reservation is confirmed. If staff offers a table,
-thank them and say the group will confirm separately. Do not disclose private
-identities or another person's budget. If staff gives unclear terms, ask once
-for clarification. Never invent staff answers or infer a deposit from silence.
+When staff explicitly says the reservation is booked, reserved, or confirmed,
+say "Thank you for helping us book it" and, if a deposit is required, say the
+FPS transfer sentence above. Then say goodbye and end the call immediately.
+Do not ask another question, make small talk, or keep the line open after the
+booking confirmation.
 If this is a wrong number or staff cannot help, apologize and end politely.
 """
 
@@ -62,7 +69,7 @@ def main() -> int:
         print("The existing assistant has no supported model configuration")
         return 1
     update = {
-        "name": "RainCheck Restaurant Inquiry",
+        "name": "RainCheck Restaurant Booking",
         "firstMessage": FIRST_MESSAGE,
         "model": {
             "provider": model["provider"],
@@ -71,9 +78,10 @@ def main() -> int:
             "toolIds": [],
         },
         "maxDurationSeconds": 180,
+        "endCallFunctionEnabled": True,
     }
     if "--apply" not in sys.argv:
-        print("Ready to configure Vapi assistant for inquiry-only calls. Run with --apply.")
+        print("Ready to configure Vapi assistant for booking calls. Run with --apply.")
         return 0
     backup_dir = ROOT / "logs"
     backup_dir.mkdir(exist_ok=True)
@@ -82,7 +90,7 @@ def main() -> int:
     backup.write_text(json.dumps(agent, indent=2), encoding="utf-8")
     vapi_calls.request("PATCH", f"/assistant/{assistant_id}", update)
     vapi_calls.assistant()  # verify the safety marker was published
-    print(f"Configured Vapi assistant for inquiry-only calls; backup: {backup}")
+    print(f"Configured Vapi assistant for booking calls; backup: {backup}")
     return 0
 
 

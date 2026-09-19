@@ -580,7 +580,7 @@ def run() -> Suite:
     tg = FakeTelegram({"stopPoll": {"options": [
         {"voter_count": 0}, {"voter_count": 3}, {"voter_count": 0}, {"voter_count": 0}]}})
     bot.handle_close(tg, -100, st)
-    s.contains("Vapi approval card describes inquiry-only behavior", tg.sent_text(), "will not make or claim a reservation")
+    s.contains("Vapi approval card describes the booking call", tg.sent_text(), "will book the table")
     tg = FakeTelegram()
     bot.handle_callback(tg, {"id": "cb", "data": f"ok:{st.approval_token}",
                              "from": {"first_name": "Dan"}, "message": {"chat": {"id": -100}}})

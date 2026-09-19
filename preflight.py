@@ -195,7 +195,7 @@ def check_cache() -> None:
 REQUIRED_SCHEMA_FIELDS = {
     "price_per_person", "deposit_total", "currency", "same_day", "requirements_met",
     "status", "confirmed_time", "confirmed_party_size",
-    "wait_estimate_minutes", "staff_notes", "booking_name",
+    "wait_estimate_minutes", "staff_notes", "booking_name", "fps_number",
 }
 
 
@@ -257,7 +257,7 @@ def check_elevenlabs() -> None:
             bad("elevenlabs", f"cannot fetch the agent: HTTP {exc.code}")
 
         warn("elevenlabs", "so verify BY HAND: authentication OFF, prompt and first message "
-                           "pasted, all six data-collection fields added",
+                           "pasted, all twelve data-collection fields added",
              "docs/elevenlabs-agent.md")
         return
     except (urllib.error.URLError, OSError, TimeoutError, json.JSONDecodeError) as exc:
@@ -281,12 +281,12 @@ def check_elevenlabs() -> None:
     if not present:
         warn("elevenlabs", "no data-collection schema configured — the bridge will derive the "
                            "outcome from the transcript instead",
-             "add the six fields in docs/elevenlabs-agent.md for a cleaner result")
+             "add the twelve fields in docs/elevenlabs-agent.md for a cleaner result")
     elif missing:
         warn("elevenlabs", f"data-collection schema is missing: {', '.join(sorted(missing))}",
              "see docs/elevenlabs-agent.md")
     else:
-        ok("elevenlabs", "data-collection schema has all six fields")
+        ok("elevenlabs", "data-collection schema has all twelve fields")
 
     prompt = ((agent.get("conversation_config") or {}).get("agent") or {}).get("prompt") or {}
     prompt_text = str(prompt.get("prompt") or "")

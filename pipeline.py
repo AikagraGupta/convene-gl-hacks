@@ -1041,7 +1041,7 @@ restaurant to book a table. Report only what the RESTAURANT STAFF actually confi
 Rules:
 - If staff did not confirm a time, leave confirmed_time null. Do not copy the time that was requested.
 - status must be exactly one of: confirmed, waitlist, declined, no_answer, unclear
-- Also extract final agreed price_per_person (HKD including all mandatory charges), deposit_total, currency, same_day and requirements_met. Use null when staff did not establish a field. same_day means staff agreed to the requested date; requirements_met means staff confirmed every requirement asked about. Never assume these from a general yes to availability.
+- Also extract final agreed price_per_person when staff volunteers it, deposit_total, fps_number, currency, same_day and requirements_met. Use null when staff did not establish a field. same_day means staff agreed to the requested date; requirements_met means staff confirmed every requirement asked about. Never assume these from a general yes to availability.
 - "declined" means they said no or are fully booked. "unclear" means the call ended ambiguously.
 - wait_estimate_minutes only if a wait was actually quoted.
 - Never invent a detail to make the call look successful.
@@ -1056,6 +1056,7 @@ Return ONLY this JSON shape:
   "staff_notes": "",
   "price_per_person": null,
   "deposit_total": null,
+  "fps_number": null,
   "currency": null,
   "same_day": null,
   "requirements_met": null
@@ -1111,6 +1112,8 @@ def extract_call_outcome(transcript: list[dict]) -> dict:
         "staff_notes": str(parsed.get("staff_notes") or "").strip()[:300],
         "price_per_person": parsed.get("price_per_person"),
         "deposit_total": parsed.get("deposit_total"),
+        "fps_number": (str(parsed["fps_number"]).strip()
+                        if parsed.get("fps_number") else None),
         "currency": parsed.get("currency"),
         "same_day": parsed.get("same_day"),
         "requirements_met": parsed.get("requirements_met"),

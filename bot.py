@@ -661,17 +661,17 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
     if state.negotiation_limits and state.approval_payload["call_provider"] == "vapi":
         limits = state.negotiation_limits
         card.append(f"• Group boundaries: {negotiation.clock(limits['start'])}–{negotiation.clock(limits['end'])}, "
-                    f"up to HK${limits['budget']:g}/person. No deposits authorised.")
+                    f"up to HK${limits['budget']:g}/person. Any deposit will be noted for FPS transfer.")
     elif state.negotiation_limits:
         limits = state.negotiation_limits
         card.append(f"• May negotiate: {negotiation.clock(limits['start'])}–{negotiation.clock(limits['end'])}, "
-                    f"up to HK${limits['budget']:g}/person including charges. No deposits.")
+                    f"up to HK${limits['budget']:g}/person including charges. Any deposit will be noted for FPS transfer.")
     else:
         card.append("• No time flexibility or spending authority set. Use /negotiate 19:00-20:00 budget 200 to delegate it.")
     if private["inputs"]:
         card.append("• Saved private requirements also apply. Identities and private limits stay protected; the call transcript will be posted to this group.")
     if state.approval_payload["call_provider"] == "vapi":
-        card.append("• Vapi will ask about availability and any deposit, not menu prices. It will not make or claim a reservation in this version.")
+        card.append("• Vapi will book the table, record any deposit and FPS details, and post the result here.")
     else:
         card.append("• This approves the displayed negotiation limits for the call. Staff must still confirm a matching offer.")
     card.append("")
@@ -827,7 +827,7 @@ HELP = (
     "/decide — read the chat and propose three\n"
     "/close — close the poll, pick the winner, ask to call\n"
     "/private — private requirements; /private new starts a new outing\n"
-    "/negotiate 19:00-20:00 budget 200 — propose call limits (HKD/person, no deposit)\n"
+    "/negotiate 19:00-20:00 budget 200 — set time and an optional price guard; deposits are recorded for FPS\n"
     "/status — what I've read and what I know\n"
     "/who — every preference I remember, with the quote it came from\n"
     "/forget NAME — drop someone; /forget (or /forget all) clears memory and starts a fresh chat context\n\n"
@@ -891,8 +891,8 @@ def handle_message(tg: Telegram, message: dict) -> None:
             save_state()
             limits = state.negotiation_limits
             tg.send(chat_id, f"<b>Proposed delegation</b>\n{negotiation.clock(limits['start'])}–{negotiation.clock(limits['end'])}, "
-                    f"up to HK${limits['budget']:g}/person including all charges. No deposits.\n"
-                    "Private requirements can narrow these limits. Run /close to review and approve the call with these terms.")
+                    f"up to HK${limits['budget']:g}/person as an optional price guard. Deposits are noted for FPS transfer.\n"
+                    "Private requirements can narrow these limits. Run /close to approve the call with these terms.")
         except ValueError as error:
             tg.send(chat_id, esc(str(error)))
     elif verb == "decide":

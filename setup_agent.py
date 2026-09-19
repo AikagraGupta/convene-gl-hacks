@@ -7,7 +7,7 @@
 
 Why this exists rather than a dashboard checklist: the agent's prompt has to
 reference seven dynamic variables by exact name, and its data-collection schema
-has to use six exact field names, or things fail SILENTLY. A prompt with a
+has to use twelve exact field names, or things fail SILENTLY. A prompt with a
 misspelled variable makes a fluent, confident call that mentions no dietary
 constraint and no time. A schema with a renamed field posts an empty outcome to
 the chat. Neither raises an error anywhere.

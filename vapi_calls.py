@@ -15,7 +15,7 @@ from envlite import env, env_flag, env_list
 import places
 
 BASE = "https://api.vapi.ai"
-PROMPT_MARKER = "RAIN_CHECK_INQUIRY_V2"
+PROMPT_MARKER = "RAIN_CHECK_BOOKING_V3"
 E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 
 
@@ -96,7 +96,7 @@ def preflight(pending: dict) -> dict:
 
 
 def call_payload(pending: dict, phone: dict) -> dict:
-    """No private identities and no authority to place a booking go to Vapi."""
+    """Send only the approved booking facts and delegation to Vapi."""
     policy = pending.get("negotiation") or {}
     requirements = policy.get("requirements") or pending.get("constraints") or []
     if isinstance(requirements, list):
@@ -115,6 +115,7 @@ def call_payload(pending: dict, phone: dict) -> dict:
                 "booking_name": str(pending.get("booking_name") or "a guest")[:60],
                 "callback_number": str(pending.get("callback_number") or "")[:40],
                 "requirements": requirements_text[:500] or "none stated",
+                "negotiation_brief": str(pending.get("negotiation_brief") or "")[:900],
             }
         },
     }

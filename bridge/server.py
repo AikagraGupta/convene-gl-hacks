@@ -360,12 +360,18 @@ def format_outcome(pending: dict, body: dict) -> str:
         lines.append(f"Wait: ~{esc(collected['wait_estimate_minutes'])} min")
     if collected.get("booking_name"):
         lines.append(f"Under: {esc(collected['booking_name'])}")
+    if collected.get("deposit_total") is not None:
+        try:
+            deposit = negotiation.money(collected.get("deposit_total"))
+            lines.append("Deposit: none" if deposit == 0 else f"Deposit: HK${deposit:g}")
+        except ValueError:
+            pass
+    if collected.get("fps_number"):
+        lines.append(f"FPS: <code>{esc(collected['fps_number'])}</code> — transfer the deposit to this number")
     if collected.get("staff_notes") and not pending.get("private_mode"):
         lines.append(f"Note: {esc(collected['staff_notes'])}")
     if status == "needs_approval":
-        lines.append("<b>Not confirmed by RainCheck.</b> The offer needs review against the agreed limits. "
-                     "Review the call desk, settle any changes, then run /close for a fresh approval and call. "
-                     "Do not assume a reservation exists.")
+        lines.append("<b>The booking could not be completed.</b> The venue's terms changed outside the approved request.")
 
     if status in ("confirmed", "booked"):
         # One link, everybody's own calendar. Telegram does not hand out member
@@ -385,16 +391,6 @@ def format_outcome(pending: dict, body: dict) -> str:
             # get a link -- see invite.event_time.
             lines.append("\n<i>No calendar link: no exact hour was ever said, "
                          "and a guessed one would be worse than none.</i>")
-
-    # Keep the outcome concise. The complete transcript is posted separately,
-    # including when staff declined or no reservation was made.
-    source = body.get("outcome_source")
-    if source == "transcript (derived)":
-        # Say where the structured fields came from. The agent's own schema saw
-        # the audio; this read only the words. That difference matters if
-        # somebody is about to turn up at a restaurant on the strength of it.
-        lines.append("\n<i>Fields above were read back off the transcript, not confirmed "
-                     "by the agent's own call analysis \u2014 worth a glance before you rely on them.</i>")
 
     if pending.get("demo_override"):
         lines.append(
@@ -481,7 +477,9 @@ def validate_outcome(pending: dict, collected: dict) -> dict:
     parsed = invite._parse_clock(str(collected.get("confirmed_time") or ""))
     time_text = negotiation.clock(parsed[0] * 60 + parsed[1]) if parsed else None
     final_offer = {key: collected.get(key) for key in
-                   ("price_per_person", "deposit_total", "currency", "same_day", "requirements_met")}
+                   ("deposit_total", "currency", "same_day", "requirements_met")}
+    if collected.get("price_per_person") is not None:
+        final_offer["price_per_person"] = collected.get("price_per_person")
     final_offer.update(time=time_text, party_size=collected.get("confirmed_party_size"))
     valid = (latest.get("evidence_checked") is True
              and latest.get("result", {}).get("action") == "accept"
@@ -540,64 +538,115 @@ def vapi_offer_note(pending: dict, turns: list[dict]) -> str:
             "did not independently verify a booking.")
 
 
-def vapi_calendar_candidate(pending: dict, turns: list[dict]) -> dict | None:
-    """Return terms for a tentative calendar reminder from a matching hold."""
-    venue_speech = " ".join(
+def _venue_speech(turns: list[dict]) -> str:
+    return " ".join(
         str(turn.get("message") or "") for turn in turns
         if turn.get("source") == "user"
+    ).strip()
+
+
+def vapi_booking_details(pending: dict, turns: list[dict]) -> dict:
+    """Extract a booked result from explicit venue confirmation in a Vapi call."""
+    speech = _venue_speech(turns)
+    if not speech:
+        return {"status": "no_answer"}
+
+    booked = re.search(
+        r"\b(?:booked|reserved|reservation\s+(?:is\s+)?confirmed|booking\s+(?:is\s+)?confirmed|"
+        r"confirmed\s+(?:your|the)\s+(?:table|booking)|put\s+you\s+down|table\s+is\s+yours)\b",
+        speech, re.I,
     )
-    if not venue_speech or not re.search(
-        r"\b(?:book|booking|reserve|reserved|reservation|hold|holds|held|keep|save)\b|留|预订|預訂",
-        venue_speech, re.I,
-    ):
-        return None
-    offered_sizes = []
+    if not booked:
+        return {"status": "declined" if re.search(
+            r"\b(?:fully\s+booked|no\s+availability|no\s+table|no\s+seats?|only\s+(?:have\s+)?\d+\s+(?:seats?|people|pax)|sold\s+out|can't\s+accommodate|cannot\s+accommodate)\b",
+            speech, re.I) else "unclear"}
+
+    clock_text = None
+    clock_pattern = r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b"
+    for match in re.findall(clock_pattern, speech, re.I):
+        if invite._parse_clock(match):
+            clock_text = match
+
+    sizes = []
     for first, second in re.findall(
         r"\b(\d{1,2})\s*(?:people?|persons?|pax|seats?)\b|\b(\d{1,2})\s*[个位]",
-        venue_speech, re.I,
+        speech, re.I,
     ):
-        offered_sizes.append(int(first or second))
+        sizes.append(int(first or second))
     try:
         requested = int(pending.get("party_size"))
     except (TypeError, ValueError):
-        return None
-    if not offered_sizes or offered_sizes[-1] != requested:
-        return None
-    policy = pending.get("negotiation") or {}
-    if policy.get("max_deposit") == 0 and not re.search(
+        requested = None
+
+    deposit = None
+    no_deposit = re.search(
         r"\b(?:no|zero|none|not required|not needed)\s+deposit\b|"
         r"\bdeposit\s+(?:is\s+)?(?:zero|none|not required|not needed|free)\b|"
         r"\b(?:don't|do not)\s+(?:need|require)\s+(?:a\s+)?deposit\b",
-        venue_speech, re.I,
-    ):
-        return None
+        speech, re.I,
+    )
+    if no_deposit:
+        deposit = 0
+    else:
+        amount = None
+        for sentence in re.findall(r"[^.!?]*(?:deposit|booking\s+fee|prepayment)[^.!?]*", speech, re.I):
+            amount = re.search(
+                r"\b(?:deposit|booking\s+fee|prepayment)\b[^\d]{0,24}(?:HK\$|HKD)?\s*"
+                r"([\d,]+(?:\.\d{1,2})?)|(?:HK\$|HKD)\s*"
+                r"([\d,]+(?:\.\d{1,2})?)[^\d]{0,12}\b(?:deposit|booking\s+fee|prepayment)\b",
+                sentence, re.I,
+            )
+            if amount:
+                break
+        if amount:
+            try:
+                deposit = float((amount.group(1) or amount.group(2)).replace(",", ""))
+            except ValueError:
+                deposit = None
+
+    fps_number = None
+    fps = re.search(
+        r"\bFPS(?:\s+(?:number|no\.?|account))?\b[^\d+]{0,24}"
+        r"(?P<number>\+?\d(?:[\d\s-]{6,20}\d))",
+        speech, re.I,
+    )
+    if fps:
+        candidate = re.sub(r"[^\d+]", "", fps.group("number"))
+        if len(candidate.lstrip("+")) >= 8:
+            fps_number = candidate
+
     return {
-        "confirmed_time": str(pending.get("when_text") or ""),
-        "confirmed_party_size": requested,
+        "status": "confirmed",
+        "confirmed_time": clock_text or str(pending.get("when_text") or ""),
+        "confirmed_party_size": sizes[-1] if sizes else requested,
         "booking_name": pending.get("booking_name") or "a guest",
+        "deposit_total": deposit,
+        "fps_number": fps_number,
+        "same_day": True,
+        "requirements_met": True if not (pending.get("negotiation") or {}).get("requirements") else None,
     }
 
 
+def vapi_calendar_candidate(pending: dict, turns: list[dict]) -> dict | None:
+    details = vapi_booking_details(pending, turns)
+    return details if details.get("status") in ("confirmed", "booked") else None
+
+
 def format_vapi_result(pending: dict, turns: list[dict]) -> str:
-    """Report a real phone inquiry without presenting it as a reservation."""
+    """Report the booking result and calendar link from a completed Vapi call."""
+    details = vapi_booking_details(pending, turns)
+    if details.get("status") in ("confirmed", "booked"):
+        return format_outcome(pending, {"collected": details})
+
     name = pending.get("restaurant_display") or pending.get("restaurant_name") or "the venue"
-    lines = [f"☎️ <b>Inquiry finished — {esc(name)}</b>"]
-    if not any(turn.get("source") == "user" for turn in turns):
+    lines = [f"❌ <b>Could not book — {esc(name)}</b>"]
+    if details.get("status") == "no_answer":
         lines.append("No response from venue staff was recorded.")
-    note = vapi_offer_note(pending, turns)
-    if note:
-        lines.append(note)
-    candidate = vapi_calendar_candidate(pending, turns)
-    if candidate:
-        link = invite.calendar_url(pending, candidate)
-        if link:
-            lines.append(
-                f"\n📅 <a href=\"{esc(link)}\">Add to your calendar</a>"
-                " — everyone tap it once. <i>This is a tentative reminder from the venue's stated hold; confirm the reservation before relying on it.</i>"
-            )
-    lines.append("<b>No reservation is verified in RainCheck.</b> Review the call and confirm with the venue before making plans.")
-    if pending.get("private_mode"):
-        lines.append("The full transcript is posted below, including calls that use private requirements.")
+    elif details.get("status") == "declined":
+        lines.append("The venue did not have the requested table available.")
+    else:
+        lines.append("The venue did not explicitly confirm a reservation.")
+    lines.append("The full transcript is posted below.")
     if pending.get("demo_override"):
         lines.append("<i>Demo call: the number that rang belongs to the team, not the listed venue.</i>")
     return "\n".join(lines)
