@@ -157,6 +157,19 @@ Jenny: i am in Sheung Shui"""
     s.eq("explicit veto survives a model omission", merged["vetoed"][0]["thing"], "mcdonalds")
     s.eq("explicit third origin survives a model omission", merged["coming_from"][-1]["place"], "Sheung Shui")
     s.contains("later salad agreement survives a model omission", merged["prefer_cuisines"], "salad")
+    s.eq("old food is superseded only after its proposer changes position",
+         pipeline._superseded_foods(rehearsal), {"thai", "mcdonalds"})
+    stale_model = pipeline._empty_constraints("")
+    stale_model["source"] = "gemini"
+    stale_model["soft"] = [{"constraint": "Thai food", "who": "Kai", "quote": "want Thai"},
+                           {"constraint": "Salad", "who": "Jenny", "quote": "maybe salad"}]
+    stale_model["prefer_cuisines"] = ["Thai", "Salad"]
+    stale_model["open_questions"] = ["Did Kai switch from Thai to salad?",
+                                      "Where is the middle meeting point?"]
+    settled = pipeline._supplement_explicit_facts(stale_model, rehearsal)
+    s.eq("stale cuisine does not survive the later agreement", settled["prefer_cuisines"], ["Salad"])
+    s.eq("stale preference is removed from the summary", len(settled["soft"]), 1)
+    s.eq("resolved cuisine question is not asked again", settled["open_questions"], [])
 
     # Regression: money and party size must not share one sanity range, or
     # every real HK$300 budget is silently discarded.

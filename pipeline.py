@@ -693,6 +693,37 @@ def keyword_constraints(chat_text: str) -> dict:
     return out
 
 
+def _superseded_foods(chat_text: str) -> set[str]:
+    """Foods proposed by a speaker who then withdrew or agreed to another.
+
+    This never guesses consensus from an isolated "maybe". It only removes a
+    stale preference when its own proposer changes their stated position.
+    """
+    current: dict[str, str] = {}
+    proposed: set[str] = set()
+    for line in chat_text.splitlines():
+        who, sep, body = line.partition(":")
+        if not sep or not who.strip():
+            continue
+        who, body = who.strip().lower(), body.lower()
+        if re.search(r"\bchanged my mind\b", body):
+            current.pop(who, None)
+            continue
+        foods = [food for food, pattern in FOOD_MENTIONS.items()
+                 if re.search(r"\b(?:" + pattern + r")\b", body)]
+        if len(foods) != 1:
+            continue  # "Thai or salad" is unresolved, not a change of mind.
+        food = foods[0]
+        pattern = FOOD_MENTIONS[food]
+        if re.search(r"\b(?:not|no|avoid|never|don'?t want)\s+(?:the\s+)?(?:" + pattern + r")\b", body):
+            if current.get(who) == food:
+                current.pop(who)
+        elif re.search(r"\b(?:want|wanna|prefer|maybe|how about|okay|ok|let'?s|lets)\b", body):
+            proposed.add(food)
+            current[who] = food
+    return proposed - set(current.values())
+
+
 def _supplement_explicit_facts(model: dict, chat_text: str) -> dict:
     """Keep literal rejections and travel origins even when the model misses one.
 
@@ -721,6 +752,24 @@ def _supplement_explicit_facts(model: dict, chat_text: str) -> dict:
             model["soft"].append(item)
         if food and food not in {_norm(v) for v in model["prefer_cuisines"]}:
             model["prefer_cuisines"].append(item["constraint"])
+    superseded = _superseded_foods(chat_text)
+    if superseded:
+        def stale(value: str) -> bool:
+            low = value.lower()
+            return any(re.search(r"\b(?:" + FOOD_MENTIONS[food] + r")\b", low)
+                       for food in superseded)
+        model["soft"] = [item for item in model["soft"]
+                         if not stale(item.get("constraint", ""))]
+        model["prefer_cuisines"] = [value for value in model["prefer_cuisines"]
+                                     if not stale(value)]
+        model["open_questions"] = [question for question in model["open_questions"]
+                                   if not (stale(question) and
+                                           re.search(r"\b(?:still|switch|changed|instead)\b", question, re.I))]
+    if model["coming_from"]:
+        # The search layer computes fair meeting districts from these origins;
+        # presenting that computation as a question for the friends is noise.
+        model["open_questions"] = [question for question in model["open_questions"]
+                                   if not re.search(r"\b(?:middle|midpoint|meeting point)\b", question, re.I)]
     return model
 
 
