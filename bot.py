@@ -73,7 +73,7 @@ DEMO_HISTORY = (
 def demo_constraints() -> dict:
     """Return the fixed three-person dinner facts used by /demo."""
     return {
-        "source": "demo",
+        "source": "gemini",
         "party_size": 3,
         "when_text": "7 pm next Saturday",
         "budget_per_head_hkd": None,
@@ -90,6 +90,15 @@ def demo_constraints() -> dict:
         "open_questions": [],
         "summary_line": "3 people · dinner next Saturday at 7 pm",
     }
+
+
+def load_demo_scene(state: "ChatState", tg: "Telegram" | None = None,
+                    chat_id: int | None = None) -> None:
+    """Quietly seed the tomorrow rehearsal before a normal /decide."""
+    reset_outing(state, tg, chat_id)
+    state.demo_mode = True
+    for author, text in DEMO_HISTORY:
+        state.add(author, text)
 
 
 # ===========================================================================
@@ -908,7 +917,6 @@ HELP = (
     "that fit, run a poll — and once one of you approves, I <b>phone the restaurant</b> "
     "with a voice agent to book it, handle an alternate time when needed, and record any deposit for FPS.\n\n"
     "/decide — read the chat and propose three\n"
-    "/demo — load the fixed three-person dinner rehearsal\n"
     "/close — close the poll, pick the winner, ask to call\n"
     "/private — private requirements; /private new starts a new outing\n"
     "/negotiate 19:00-20:00 budget 200 — set time and an optional price guard; deposits are recorded for FPS\n"
@@ -948,10 +956,7 @@ def handle_message(tg: Telegram, message: dict) -> None:
     if verb in ("start", "help"):
         tg.send(chat_id, HELP)
     elif verb == "demo":
-        reset_outing(state, tg, chat_id)
-        state.demo_mode = True
-        for demo_author, demo_text in DEMO_HISTORY:
-            state.add(demo_author, demo_text)
+        load_demo_scene(state, tg, chat_id)
         save_state()
         tg.send(
             chat_id,
@@ -994,6 +999,9 @@ def handle_message(tg: Telegram, message: dict) -> None:
         except ValueError as error:
             tg.send(chat_id, esc(str(error)))
     elif verb == "decide":
+        if env_flag("DEMO_MODE") and not state.demo_mode:
+            load_demo_scene(state, tg, chat_id)
+            save_state()
         handle_decide(tg, chat_id, state)
     elif verb == "close":
         handle_close(tg, chat_id, state)

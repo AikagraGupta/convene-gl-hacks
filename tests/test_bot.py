@@ -91,7 +91,7 @@ def run() -> Suite:
     )
     people.PEOPLE_PATH = SUITE_PEOPLE
     bot.PEOPLE = {}
-    for key in ("DEMO_PHONE", "CONSENTED_NUMBERS", "ALLOW_ANY_NUMBER"):
+    for key in ("DEMO_PHONE", "DEMO_MODE", "CONSENTED_NUMBERS", "ALLOW_ANY_NUMBER"):
         os.environ.pop(key, None)
     os.environ["BOOKER_NAME"] = "Prakhar"
     os.environ["CALLBACK_NUMBER"] = "+85298887777"
@@ -125,6 +125,19 @@ def run() -> Suite:
     s.check("/demo enables the fixed rehearsal mode", demo_state.demo_mode)
     s.eq("/demo seeds three speaker messages", len(demo_state.history), 3)
     s.contains("/demo confirmation names the dinner", demo_tg.sent_text(), "Dinner next Saturday")
+    bot.STATE.clear()
+    os.environ["DEMO_MODE"] = "1"
+    decide_tg = FakeTelegram()
+    real_handle_decide = bot.handle_decide
+    bot.handle_decide = lambda *_args: None
+    try:
+        bot.handle_message(decide_tg, msg("/decide", chat_id=-778)["message"])
+    finally:
+        bot.handle_decide = real_handle_decide
+        os.environ.pop("DEMO_MODE", None)
+    decide_state = bot.state_for(-778)
+    s.check("demo mode makes a plain /decide load the rehearsal", decide_state.demo_mode)
+    s.eq("plain /decide gets the three demo lines", len(decide_state.history), 3)
     bot.STATE.clear()
 
     big = bot.ChatState()
