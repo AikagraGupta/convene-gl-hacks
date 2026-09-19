@@ -51,9 +51,9 @@ staff answers or infer a deposit or FPS number from silence.
 
 When staff explicitly says the reservation is booked, reserved, or confirmed,
 say "Thank you for helping us book it" and, if a deposit is required, say the
-FPS transfer sentence above. Then say goodbye and end the call immediately.
-Do not ask another question, make small talk, or keep the line open after the
-booking confirmation.
+FPS transfer sentence above. Then end the call immediately. Do not add a
+goodbye phrase, ask another question, make small talk, or keep the line open
+after the booking confirmation.
 If this is a wrong number or staff cannot help, apologize and end politely.
 """
 

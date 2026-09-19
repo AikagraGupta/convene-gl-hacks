@@ -82,6 +82,8 @@ def run() -> Suite:
                    "FPS payment number")
         s.contains("agent ends after a booking confirmation", setup_vapi.SYSTEM_PROMPT,
                    "end the call immediately")
+        s.contains("agent thanks staff without a goodbye loop", setup_vapi.SYSTEM_PROMPT,
+                   "goodbye phrase")
         s.contains("agent does not ask for a meal price", setup_vapi.SYSTEM_PROMPT,
                    "Do not ask for a price")
         s.eq("transcript keeps staff and agent roles", vapi_calls.turns({"artifact": {"messages": [
