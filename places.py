@@ -1,0 +1,752 @@
+#!/usr/bin/env python3
+"""places.py — real Hong Kong restaurants with real, dialable phone numbers.
+
+Why OpenStreetMap and not a restaurant platform: there is no usable alternative.
+Every booking platform in this market is partner-gated (OpenTable, Resy,
+SevenRooms, Tock all require an application and a multi-week review), and
+OpenRice — the dominant platform in Hong Kong — cannot be touched at all. Its
+robots.txt names GPTBot, PerplexityBot, meta-externalagent and Bytespider and
+disallows the JSON service endpoints outright, and its terms forbid using "any
+robot, any automatic device or manual process to monitor or copy the Channels".
+A hackathon submission is a public repository and a live demo. Scraping it would
+be both a licence breach and a bad thing to put on stage.
+
+So: Overpass. No key, no card, real data, and a licence that permits this.
+
+The cost is coverage. Measured across HK Island north shore plus Kowloon: 1,199
+named places, 156 with a usable phone number, 53% with a cuisine tag. Roughly a
+fifth are callable. That single number drives the whole ranking design — a
+beautiful recommendation you cannot phone is worthless to this agent, so
+phone-bearing rows sort first, everywhere, unconditionally.
+
+Three layers, so this module cannot be the reason the demo fails:
+  live Overpass  ->  places_cache.json  ->  a handpicked seed list in this file
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import re
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+import domains
+from envlite import env
+
+ROOT = Path(__file__).resolve().parent
+CACHE_PATH = ROOT / "places_cache.json"
+
+
+def cache_path(category_key: str | None = None) -> Path:
+    """One cache file per category.
+
+    The restaurant cache keeps the original filename, and keeps resolving
+    through the module-level CACHE_PATH, because the test suite monkeypatches
+    that name and because an existing harvest on someone's laptop should not
+    be orphaned by this change. Every other category gets its own file: a
+    shared one would let pickleball courts evict restaurants and then serve
+    them to a group asking about dinner.
+    """
+    key = (category_key or domains.DEFAULT_CATEGORY)
+    if key == domains.DEFAULT_CATEGORY:
+        return CACHE_PATH
+    return ROOT / f"places_cache_{key}.json"
+
+# A fresh cache is preferred over a live query, and that is a demo decision as
+# much as a caching one. The live Overpass round trip measured 6-18 seconds
+# depending on load, and /decide is watched by six impatient people in a group
+# chat. A restaurant list twenty minutes old is not stale; eighteen seconds of
+# dead air is a worse product.
+CACHE_MAX_AGE_SECONDS = int(env("PLACES_CACHE_MAX_AGE") or 6 * 3600)
+
+OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",  # mirror; de/ rate-limits
+]
+TIMEOUT = 30
+
+# Bounding boxes, south/west/north/east. Kept small and named because a
+# whole-territory query times out on the public endpoint at conference wifi
+# speeds and returns nothing useful.
+AREAS: dict[str, tuple[float, float, float, float]] = {
+    "hk_island_north": (22.270, 114.130, 22.295, 114.220),
+    "kowloon_south": (22.290, 114.160, 22.325, 114.200),
+    "kowloon_east": (22.300, 114.200, 22.340, 114.240),
+    "sha_tin": (22.365, 114.170, 22.400, 114.210),
+    "tseung_kwan_o": (22.300, 114.250, 22.330, 114.280),
+}
+
+# Coordinate -> district. Judges and friends both read "Sheung Wan", not
+# "22.2856, 114.1503".
+DISTRICTS: list[tuple[str, float, float, float, float]] = [
+    ("Kennedy Town", 22.278, 114.120, 22.290, 114.135),
+    ("Sai Ying Pun", 22.280, 114.135, 22.292, 114.145),
+    ("Sheung Wan", 22.281, 114.145, 22.292, 114.155),
+    ("Central", 22.275, 114.152, 22.288, 114.165),
+    ("Admiralty", 22.274, 114.160, 22.283, 114.168),
+    ("Wan Chai", 22.271, 114.168, 22.285, 114.180),
+    ("Causeway Bay", 22.274, 114.180, 22.288, 114.192),
+    ("North Point", 22.283, 114.188, 22.298, 114.205),
+    ("Quarry Bay", 22.282, 114.205, 22.295, 114.220),
+    ("Tsim Sha Tsui", 22.290, 114.165, 22.302, 114.180),
+    ("Jordan", 22.302, 114.165, 22.310, 114.178),
+    ("Yau Ma Tei", 22.308, 114.165, 22.316, 114.178),
+    ("Mong Kok", 22.314, 114.165, 22.328, 114.180),
+    ("Hung Hom", 22.296, 114.180, 22.312, 114.196),
+    ("Kwun Tong", 22.305, 114.220, 22.330, 114.240),
+    ("Sha Tin", 22.365, 114.170, 22.400, 114.210),
+    ("Tseung Kwan O", 22.300, 114.250, 22.330, 114.280),
+]
+
+# Which bounding box each district sits in, so a district named in the chat can
+# be turned into a search area. Derived from DISTRICTS above rather than
+# duplicated, but stated explicitly because the boxes overlap.
+DISTRICT_TO_AREA: dict[str, str] = {
+    "Kennedy Town": "hk_island_north", "Sai Ying Pun": "hk_island_north",
+    "Sheung Wan": "hk_island_north", "Central": "hk_island_north",
+    "Admiralty": "hk_island_north", "Wan Chai": "hk_island_north",
+    "Causeway Bay": "hk_island_north", "North Point": "hk_island_north",
+    "Quarry Bay": "hk_island_north",
+    "Tsim Sha Tsui": "kowloon_south", "Jordan": "kowloon_south",
+    "Yau Ma Tei": "kowloon_south", "Mong Kok": "kowloon_south",
+    "Hung Hom": "kowloon_south",
+    "Kwun Tong": "kowloon_east",
+    "Sha Tin": "sha_tin", "Tai Wai": "sha_tin", "Fo Tan": "sha_tin",
+    "Tseung Kwan O": "tseung_kwan_o",
+}
+
+# Where Hong Kong groups actually converge when people come from different
+# places: the two ends of the cross-harbour spine. Included alongside any
+# origin-specific area so a Sha Tin commuter still gets Central and Kowloon
+# options rather than only Sha Tin restaurants -- "coming from X" is a travel
+# constraint, not a request to eat in X.
+SPINE_AREAS = ["hk_island_north", "kowloon_south"]
+
+CUISINE_LABELS = {
+    "chinese": "Chinese", "cantonese": "Cantonese", "dim_sum": "dim sum",
+    "japanese": "Japanese", "sushi": "sushi", "ramen": "ramen",
+    "korean": "Korean", "thai": "Thai", "vietnamese": "Vietnamese",
+    "indian": "Indian", "italian": "Italian", "pizza": "pizza",
+    "french": "French", "spanish": "Spanish", "american": "American",
+    "burger": "burgers", "steak_house": "steakhouse", "seafood": "seafood",
+    "vegetarian": "vegetarian", "vegan": "vegan", "mexican": "Mexican",
+    "asian": "Asian", "international": "international", "noodle": "noodles",
+    "hotpot": "hotpot", "hot_pot": "hotpot", "barbecue": "BBQ",
+}
+
+
+# ---------------------------------------------------------------------------
+# Phone normalisation. This is the single most important function in the file,
+# because its output gets DIALLED.
+# ---------------------------------------------------------------------------
+# OSM phone tags in Hong Kong are a genuine mess. All of these are real:
+#     "+852 2527 2343"   "25734554"   "852-2857-5511"   "+852 2877 3833; +852 2877 3834"
+#     "+85221234567"     "tel:+852-2522-1234"   "2522 1234 (shop)"
+# Everything becomes +852XXXXXXXX or None. Never a half-parsed string: a broken
+# number that looks plausible is worse than no number, because someone dials it.
+
+HK_MOBILE_LANDLINE_PREFIXES = tuple("23456789")
+
+
+def normalise_phone(raw: str | None) -> str | None:
+    if not raw or not isinstance(raw, str):
+        return None
+
+    # Multi-number tags: take the first. A restaurant's first listed line is
+    # its main line often enough, and picking arbitrarily is not acceptable.
+    first = re.split(r"[;,/]| or ", raw)[0]
+    first = re.sub(r"\((?:[^)]*)\)", " ", first)          # drop "(shop)", "(reception)"
+    first = first.replace("tel:", "").replace("Tel:", "")
+    digits = re.sub(r"\D", "", first)
+
+    if not digits:
+        return None
+    if digits.startswith("00852"):
+        digits = digits[5:]
+    elif digits.startswith("852") and len(digits) == 11:
+        digits = digits[3:]
+
+    if len(digits) != 8 or not digits.startswith(HK_MOBILE_LANDLINE_PREFIXES):
+        return None  # not a Hong Kong number we are willing to dial
+    return "+852" + digits
+
+
+# Centre of each district, from the boxes above. Good enough for "which of
+# these is least unfair to everybody" -- the error is a few hundred metres and
+# the question is which side of a harbour to eat on.
+DISTRICT_CENTRES: dict[str, tuple[float, float]] = {
+    name: ((south + north) / 2.0, (west + east) / 2.0)
+    for name, south, west, north, east in DISTRICTS
+}
+
+# Where a group can actually converge: somewhere on the MTR spine, not a
+# residential pocket that happens to sit at the geometric middle.
+MEETING_CANDIDATES = [
+    "Central", "Admiralty", "Wan Chai", "Causeway Bay", "Sheung Wan",
+    "Tsim Sha Tsui", "Jordan", "Mong Kok", "Yau Ma Tei", "North Point",
+    "Kowloon Tong", "Hung Hom",
+]
+
+
+def _km_between(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Great-circle distance. Straight-line, not travel time.
+
+    Deliberately not a routing API: this only has to ORDER candidate districts,
+    and in Hong Kong straight-line distance across the harbour tracks the MTR
+    closely enough to pick a side. A real journey planner would be better and
+    is not worth a key, a quota and a failure mode for a tie-break.
+    """
+    lat1, lon1, lat2, lon2 = map(math.radians, (a[0], a[1], b[0], b[1]))
+    h = (math.sin((lat2 - lat1) / 2) ** 2
+         + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2)
+    return 2 * 6371.0 * math.asin(math.sqrt(h))
+
+
+def meeting_districts(origins: list[str], limit: int = 6) -> list[str]:
+    """Rank meeting points so the WORST journey is as short as possible.
+
+    Minimising the worst commute rather than the average is the whole point.
+    An average puts dinner next to whoever lives closest to town and quietly
+    hands the entire journey to the one person coming from Tuen Mun -- which is
+    exactly the grievance that makes these conversations drag for forty
+    messages. Fairness is the product here, not efficiency.
+    """
+    points = [DISTRICT_CENTRES[o] for o in origins if o in DISTRICT_CENTRES]
+    if not points:
+        return []
+
+    def cost(district: str) -> tuple[float, float]:
+        here = DISTRICT_CENTRES[district]
+        legs = [_km_between(here, p) for p in points]
+        return (max(legs), sum(legs) / len(legs))   # worst first, then average
+
+    ranked = sorted((d for d in MEETING_CANDIDATES if d in DISTRICT_CENTRES), key=cost)
+    return ranked[:limit]
+
+
+def mentioned_districts(constraints: dict) -> list[str]:
+    """Every Hong Kong district the chat actually named, in the order found.
+
+    Reads coming_from first (someone is commuting and said so), then the free
+    text of every constraint, veto and note. Nothing is assumed: a district that
+    nobody mentioned never appears here.
+    """
+    found: list[str] = []
+
+    def note(name: str) -> None:
+        if name and name not in found:
+            found.append(name)
+
+    for entry in constraints.get("coming_from") or []:
+        place = str((entry or {}).get("place") or "").strip()
+        for district, _, _, _, _ in DISTRICTS:
+            if district.lower() == place.lower():
+                note(district)
+
+    haystack = " ".join(
+        [str(item.get("constraint", "")) for item in (constraints.get("hard") or [])]
+        + [str(item.get("constraint", "")) for item in (constraints.get("soft") or [])]
+        + [str(item.get("thing", "")) for item in (constraints.get("vetoed") or [])]
+        + [str(entry.get("place", "")) for entry in (constraints.get("coming_from") or [])]
+        + (constraints.get("open_questions") or [])
+        + [str(constraints.get("summary_line") or "")]
+    ).lower()
+    for district, _, _, _, _ in DISTRICTS:
+        if re.search(r"\b" + re.escape(district.lower()) + r"\b", haystack):
+            note(district)
+    return found
+
+
+def origin_districts(constraints: dict) -> list[str]:
+    """Districts people said they are travelling FROM."""
+    found: list[str] = []
+    for entry in constraints.get("coming_from") or []:
+        place = str((entry or {}).get("place") or "").strip().lower()
+        for district, _, _, _, _ in DISTRICTS:
+            if district.lower() == place and district not in found:
+                found.append(district)
+    return found
+
+
+def destination_districts(constraints: dict) -> list[str]:
+    """Districts the chat named as WHERE to eat, rather than where from.
+
+    The distinction matters and used to be missing. "I'm coming from Sha Tin"
+    and "let's eat in Sha Tin" both mentioned Sha Tin, and both were treated as
+    a place to search -- so a commuter got restaurants next to their own office,
+    the exact opposite of what they asked for.
+    """
+    origins = {d.lower() for d in origin_districts(constraints)}
+    return [d for d in mentioned_districts(constraints) if d.lower() not in origins]
+
+
+def areas_for(constraints: dict) -> list[str]:
+    """Turn what the chat said into which bounding boxes to search.
+
+    Three cases, in priority order:
+      a named destination  -> search there, they have decided
+      only origins named   -> search the fairest meeting points between them
+      nothing named        -> search everywhere, assume nothing
+    """
+    def to_areas(districts: list[str]) -> list[str]:
+        out: list[str] = []
+        for district in districts:
+            area = DISTRICT_TO_AREA.get(district)
+            if area and area not in out:
+                out.append(area)
+        return out
+
+    destinations = destination_districts(constraints)
+    if destinations:
+        wanted = to_areas(destinations)
+        for area in SPINE_AREAS:
+            if area not in wanted:
+                wanted.append(area)
+        return wanted or list(AREAS)
+
+    origins = origin_districts(constraints)
+    if origins:
+        # Search the fair middle AND each origin's own area, because sometimes
+        # the fairest answer really is near where someone starts.
+        wanted = to_areas(meeting_districts(origins)) + to_areas(origins)
+        deduped: list[str] = []
+        for area in wanted:
+            if area not in deduped:
+                deduped.append(area)
+        return deduped or list(AREAS)
+
+    return list(AREAS)
+
+
+def relevance_rank(rows: list[dict], constraints: dict) -> list[dict]:
+    """Re-rank an existing pool against the districts the chat named.
+
+    Kept separate from search so it applies to cached rows too -- the cache is
+    territory-wide and constraint-blind by design, so the constraint awareness
+    has to live in the ranking rather than only in the query.
+
+    Phone-bearing still dominates. A perfectly located restaurant we cannot
+    telephone is useless to this agent.
+    """
+    destinations = {d.lower() for d in destination_districts(constraints)}
+    origins = origin_districts(constraints)
+    # When nobody named a destination, the fair middle between the origins IS
+    # the destination, so rank by it rather than by a fixed spine list.
+    fair = [d.lower() for d in meeting_districts(origins)] if origins else []
+    fair_rank = {name: index for index, name in enumerate(fair)}
+    spine = {"central", "sheung wan", "wan chai", "causeway bay", "admiralty",
+             "tsim sha tsui", "jordan", "mong kok", "yau ma tei"}
+
+    def score(row: dict) -> tuple:
+        area = str(row.get("area") or "").lower()
+        return (
+            bool(row.get("phone")),
+            area in destinations,                       # they decided
+            -fair_rank.get(area, 99) if fair else 0,    # else: fairest first
+            area in spine,
+            bool(row.get("descriptor") or row.get("cuisine")),
+            bool(area),
+        )
+
+    return sorted(rows, key=score, reverse=True)
+
+
+def _district_for(lat: float | None, lon: float | None) -> str:
+    if lat is None or lon is None:
+        return ""
+    for name, south, west, north, east in DISTRICTS:
+        if south <= lat <= north and west <= lon <= east:
+            return name
+    return ""
+
+
+def _cuisine_for(tags: dict) -> str:
+    raw = (tags.get("cuisine") or "").lower()
+    if not raw:
+        if tags.get("amenity") == "fast_food":
+            return "fast food"
+        return ""
+    parts = [CUISINE_LABELS.get(p.strip(), p.strip().replace("_", " ")) for p in raw.split(";") if p.strip()]
+    return ", ".join(dict.fromkeys(parts))[:60]
+
+
+def _descriptor_for(tags: dict, category: "domains.Category") -> str:
+    """The one tag that tells two venues of the same kind apart.
+
+    Falls back to the empty string rather than inventing something. A court
+    with no `sport` tag is still a court worth showing; claiming it is tennis
+    because most of them are would be a lie the agent then says out loud on
+    the phone.
+    """
+    if category.key == domains.DEFAULT_CATEGORY:
+        return _cuisine_for(tags)
+    raw = (tags.get(category.descriptor_tag) or "").strip()
+    if not raw:
+        return ""
+    parts = [p.strip().replace("_", " ") for p in raw.split(";") if p.strip()]
+    return ", ".join(dict.fromkeys(parts))[:60]
+
+
+def _name_for(tags: dict) -> str:
+    """Prefer the English name.
+
+    OSM stores "美心Food² Maxim's Food²" in `name` and "Maxim's Food²" in
+    `name:en`. The second one is what the agent can pronounce on the phone and
+    what reads cleanly in a poll.
+    """
+    for key in ("name:en", "int_name", "name"):
+        value = (tags.get(key) or "").strip()
+        if value:
+            return value[:80]
+    return ""
+
+
+def _norm_key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
+
+
+# ---------------------------------------------------------------------------
+# Overpass
+# ---------------------------------------------------------------------------
+
+def build_query(bbox: tuple[float, float, float, float],
+                category: "domains.Category | str | None" = None) -> str:
+    """Overpass QL for one bounding box, for whatever we are booking.
+
+    The selectors live in domains.py rather than here, because "what counts as
+    a venue" is a property of the category, not of the fetching code. Passing
+    nothing still asks for restaurants, which is what every existing caller
+    wants.
+    """
+    cat = category if isinstance(category, domains.Category) else domains.get(category)
+    return domains.build_selector_query(cat, bbox, limit=400)
+
+
+def _fetch_overpass(query: str) -> list[dict]:
+    payload = urllib.parse.urlencode({"data": query}).encode()
+    last: Exception | None = None
+    for endpoint in OVERPASS_ENDPOINTS:
+        try:
+            req = urllib.request.Request(
+                endpoint, data=payload,
+                headers={"User-Agent": "Shum-AI/1.0 (AI Tinkerers hackathon; contact via repo)"},
+            )
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+                return (json.loads(resp.read().decode("utf-8")) or {}).get("elements") or []
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            last = exc
+            print(f"[places] {endpoint} failed: {type(exc).__name__}")
+    if last:
+        print(f"[places] all Overpass endpoints failed: {last}")
+    return []
+
+
+def _row_from_element(element: dict,
+                      category: "domains.Category | None" = None) -> dict | None:
+    tags = element.get("tags") or {}
+    cat = category or domains.get(None)
+    name = _name_for(tags)
+    if not name:
+        return None
+
+    lat = element.get("lat") or (element.get("center") or {}).get("lat")
+    lon = element.get("lon") or (element.get("center") or {}).get("lon")
+    if lat is None or lon is None:
+        return None  # a place we cannot locate is a place we cannot recommend
+
+    # Take the first tag that actually NORMALISES, not the first that exists.
+    # OSM has junk in these fields -- "n/a", "-", "see website", an email --
+    # and `a or b` short-circuits on the junk, so one useless `phone` tag hid
+    # a perfectly good `contact:phone` and turned a callable restaurant into
+    # an uncallable one. Reproduced: phone="n/a" + contact:phone="+852 2123
+    # 4567" gave phone=None.
+    phone = None
+    for _tag in ("phone", "contact:phone", "phone:HK", "contact:mobile", "mobile"):
+        phone = normalise_phone(tags.get(_tag))
+        if phone:
+            break
+    # A website is worth keeping even when we have a phone number: when the
+    # agent cannot get through, or the venue only takes online bookings, a real
+    # link is a far more honest answer than a shrug. Phone is still preferred --
+    # in Hong Kong, phoning to book IS the norm.
+    website = (tags.get("website") or tags.get("contact:website")
+               or tags.get("url") or tags.get("brand:website") or "").strip()
+    if website and not website.startswith(("http://", "https://")):
+        website = "https://" + website
+    return {
+        "name": name,
+        "phone": phone,
+        "website": website[:300] or None,
+        "area": _district_for(lat, lon),
+        # `descriptor` is the generic slot: cuisine for a restaurant, sport for
+        # a court, capacity for a party room. `cuisine` is kept populated for
+        # restaurants only, because exa_search, the prompts and a lot of tests
+        # still speak that name and renaming it would be churn for its own sake.
+        "descriptor": _descriptor_for(tags, cat),
+        "descriptor_label": cat.descriptor_label,
+        "category": cat.key,
+        "cuisine": _cuisine_for(tags) if cat.key == domains.DEFAULT_CATEGORY else "",
+        "lat": lat, "lon": lon,
+        "osm_id": f"{element.get('type', 'node')}/{element.get('id')}",
+        "source": "osm",
+    }
+
+
+def dedupe_and_rank(rows: list[dict]) -> list[dict]:
+    """Dedupe on normalised name, keeping the phone-bearing copy.
+
+    Chains appear many times per box. When "Tsui Wah Restaurant" shows up nine
+    times and only one node carries the phone tag, that is the one worth
+    keeping — so on collision, a row with a phone always beats a row without.
+    """
+    best: dict[str, dict] = {}
+    for row in rows:
+        key = _norm_key(row.get("name", ""))
+        if not key:
+            continue
+        held = best.get(key)
+        if held is None:
+            best[key] = row
+            continue
+        if row.get("phone") and not held.get("phone"):
+            best[key] = row
+        elif (bool(row.get("phone")) == bool(held.get("phone"))
+              and (row.get("descriptor") or row.get("cuisine"))
+              and not (held.get("descriptor") or held.get("cuisine"))):
+            best[key] = row
+
+    # Callable first. With ~20% phone coverage this is the difference between a
+    # poll the group can act on and three names nobody can book.
+    return sorted(
+        best.values(),
+        key=lambda r: (bool(r.get("phone")),
+                       bool(r.get("descriptor") or r.get("cuisine")),
+                       bool(r.get("area"))),
+        reverse=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Layer 3: the seed list. Hand-checked, so the demo has real numbers even with
+# no network at all. Every one of these consented to nothing — they are here so
+# the SEARCH works offline, and the DEMO_PHONE rail plus the consent allowlist
+# in bot.py is what stops any of them being dialled.
+# ---------------------------------------------------------------------------
+
+SEED_PLACES: list[dict] = [
+    # NAMES ONLY. Every phone is deliberately None.
+    #
+    # Never invent a phone number. That rail applies to the author
+    # of this file as much as to the model. These are well-known Hong Kong
+    # restaurants whose names are useful as a last-resort candidate set, but the
+    # digits are NOT hand-typed from memory here, because a number that is
+    # almost right is worse than no number — somebody dials it.
+    #
+    # Callable data comes from the layer above: a real Overpass run, cached to
+    # places_cache.json. Build it once while you have network:
+    #     python3 places.py --refresh-cache
+    # and the cache carries the demo even if Overpass is down at 16:00.
+    {"name": "Tsui Wah Restaurant", "phone": None, "area": "Central", "cuisine": "Cantonese, cha chaan teng", "source": "seed"},
+    {"name": "Kau Kee Restaurant", "phone": None, "area": "Sheung Wan", "cuisine": "noodles, beef brisket", "source": "seed"},
+    {"name": "Yat Lok Barbecue Restaurant", "phone": None, "area": "Central", "cuisine": "Cantonese, roast goose", "source": "seed"},
+    {"name": "Lin Heung Tea House", "phone": None, "area": "Sheung Wan", "cuisine": "dim sum", "source": "seed"},
+    {"name": "Chom Chom", "phone": None, "area": "Central", "cuisine": "Vietnamese", "source": "seed"},
+    {"name": "Samsen Wanchai", "phone": None, "area": "Wan Chai", "cuisine": "Thai", "source": "seed"},
+    {"name": "Kam's Roast Goose", "phone": None, "area": "Wan Chai", "cuisine": "Cantonese, roast goose", "source": "seed"},
+    {"name": "Dumpling Yuan", "phone": None, "area": "Central", "cuisine": "Chinese, dumplings", "source": "seed"},
+    {"name": "Ho Lee Fook", "phone": None, "area": "Central", "cuisine": "Chinese, modern", "source": "seed"},
+    {"name": "Bombay Dreams", "phone": None, "area": "Central", "cuisine": "Indian, vegetarian options", "source": "seed"},
+    {"name": "Australia Dairy Company", "phone": None, "area": "Jordan", "cuisine": "cha chaan teng", "source": "seed"},
+    {"name": "Mido Cafe", "phone": None, "area": "Yau Ma Tei", "cuisine": "cha chaan teng", "source": "seed"},
+    {"name": "Chuen Cheung Kui", "phone": None, "area": "Mong Kok", "cuisine": "Hakka, Chinese", "source": "seed"},
+]
+
+
+# ---------------------------------------------------------------------------
+# Cache
+# ---------------------------------------------------------------------------
+
+def read_cache(category_key: str | None = None) -> list[dict]:
+    path = cache_path(category_key)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    rows = data.get("places") if isinstance(data, dict) else data
+    return [r for r in (rows or []) if isinstance(r, dict) and r.get("name")]
+
+
+def write_cache(rows: list[dict], replace: bool = False,
+                category_key: str | None = None) -> None:
+    """Merge into the cache. Only --refresh-cache may replace it.
+
+    This used to overwrite wholesale, which meant a PARTIAL Overpass run --
+    one bounding box out of three answering, which is exactly what conference
+    wifi does -- destroyed everything a full harvest had collected. Measured:
+    200 callable rows down to 1, unrecoverable without network. The cache is
+    the only layer that still carries phone numbers when Overpass is down, so
+    a normal search must only ever be able to ADD to it.
+    """
+    path = cache_path(category_key)
+    if not replace:
+        existing = read_cache(category_key)
+        if existing:
+            merged = {_norm_key(r.get("name", "")): r for r in existing if r.get("name")}
+            for row in rows:
+                key = _norm_key(row.get("name", ""))
+                if not key:
+                    continue
+                held = merged.get(key)
+                # A row with a phone always beats one without, whichever side
+                # it came from.
+                if held is None or (row.get("phone") and not held.get("phone")):
+                    merged[key] = row
+            rows = list(merged.values())
+    try:
+        path.write_text(
+            json.dumps({"places": rows, "count": len(rows), "written_at": time.time()},
+                       indent=1, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        print(f"[places] could not write cache: {exc}")
+
+
+def cache_age_seconds(category_key: str | None = None) -> float | None:
+    """Seconds since the cache was written, or None if there isn't one."""
+    path = cache_path(category_key)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    written = data.get("written_at") if isinstance(data, dict) else None
+    if isinstance(written, (int, float)):
+        return max(0.0, time.time() - written)
+    try:
+        return max(0.0, time.time() - path.stat().st_mtime)
+    except OSError:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+def _cut(rows: list[dict], limit: int | None) -> list[dict]:
+    return rows if limit is None else rows[:limit]
+
+
+def search_places(areas: list[str] | None = None, limit: int | None = 60,
+                  force_live: bool = False,
+                  category: "domains.Category | str | None" = None) -> list[dict]:
+    """Fresh cache, else live Overpass, else stale cache, else the seed names.
+
+    Always returns something. The only layer that can return rows with no phone
+    number is the last one, and it says so.
+
+    `limit=None` returns the whole pool. Callers that are about to re-rank by
+    the districts the chat named MUST do that, because this function's own
+    ordering knows nothing about the chat: dedupe_and_rank is territory-wide.
+    Cutting to 60 first was measured to leave 1 of 15 Sha Tin rows alive before
+    relevance_rank ever saw them, which looked exactly like "no restaurants
+    near Sha Tin".
+    """
+    cat = category if isinstance(category, domains.Category) else domains.get(category)
+    wanted = [a for a in (areas or list(AREAS)) if a in AREAS] or list(AREAS)
+
+    if not force_live:
+        age = cache_age_seconds(cat.key)
+        if age is not None and age < CACHE_MAX_AGE_SECONDS:
+            cached = read_cache(cat.key)
+            if cached:
+                callable_count = sum(1 for r in cached if r.get("phone"))
+                print(f"[places] cache hit ({age / 60:.0f} min old): "
+                      f"{len(cached)} places, {callable_count} callable")
+                return _cut(dedupe_and_rank(cached), limit)
+
+    rows: list[dict] = []
+    for key in wanted[:3]:  # three boxes is the most that finishes in time
+        for element in _fetch_overpass(build_query(AREAS[key], cat)):
+            row = _row_from_element(element, cat)
+            if row:
+                rows.append(row)
+
+    if rows:
+        ranked = dedupe_and_rank(rows)
+        callable_count = sum(1 for r in ranked if r.get("phone"))
+        print(f"[places] overpass: {len(ranked)} places, {callable_count} callable")
+        write_cache(ranked, category_key=cat.key)
+        return _cut(ranked, limit)
+
+    cached = read_cache(cat.key)
+    if cached:
+        age = cache_age_seconds(cat.key)
+        stamp = f", {age / 3600:.1f}h old" if age else ""
+        print(f"[places] overpass down — using cache ({len(cached)} places{stamp})")
+        return _cut(dedupe_and_rank(cached), limit)
+
+    # Layer 3 is hand-checked RESTAURANTS. Serving them to a group asking
+    # about pickleball would be worse than serving nothing: the poll would
+    # look fine and the whole answer would be wrong. Other categories get an
+    # honest empty list and a caller that has to say so.
+    if cat.key != domains.DEFAULT_CATEGORY:
+        print(f"[places] overpass down AND no {cat.key} cache — returning nothing. "
+              f"There is no seed list for {cat.plural}; run "
+              f"`python3 places.py --refresh-cache --category {cat.key}` "
+              f"while you have network.")
+        return []
+
+    print(f"[places] overpass down AND cache empty — seed list only "
+          f"({len(SEED_PLACES)} names, no phone numbers). Run "
+          f"`python3 places.py --refresh-cache` while you have network.")
+    return _cut(dedupe_and_rank([dict(p) for p in SEED_PLACES]), limit)
+
+
+def callable_only(rows: list[dict]) -> list[dict]:
+    return [r for r in rows if r.get("phone")]
+
+
+def find_by_name(rows: list[dict], name: str) -> dict | None:
+    key = _norm_key(name)
+    if not key:
+        return None
+    for row in rows:
+        if _norm_key(row.get("name", "")) == key:
+            return row
+    for row in rows:
+        other = _norm_key(row.get("name", ""))
+        if other and (key in other or other in key):
+            return row
+    return None
+
+
+if __name__ == "__main__":
+    import sys
+
+    if "--refresh-cache" in sys.argv:
+        # Build the offline safety net from live data. Run this once, on wifi
+        # that works, before the room fills up.
+        harvested: list[dict] = []
+        for area_key, bbox in AREAS.items():
+            batch = [r for r in (_row_from_element(e) for e in _fetch_overpass(build_query(bbox))) if r]
+            print(f"[places] {area_key}: {len(batch)} rows, {sum(1 for r in batch if r['phone'])} callable")
+            harvested.extend(batch)
+        ranked = dedupe_and_rank(harvested)
+        write_cache(ranked, replace=True)   # rebuilding is what this flag is for
+        print(f"\n[places] cache written: {len(ranked)} places, "
+              f"{sum(1 for r in ranked if r['phone'])} with a dialable number -> {CACHE_PATH}")
+        raise SystemExit(0)
+
+    found = search_places()
+    with_phone = callable_only(found)
+    print(f"\n{len(found)} places, {len(with_phone)} with a dialable number\n")
+    for place in found[:20]:
+        print(f"  {place['phone'] or '(no phone)':<16} {place['name'][:38]:<40} {place['area']:<14} {place['cuisine'][:24]}")

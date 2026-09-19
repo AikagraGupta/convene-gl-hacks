@@ -1,0 +1,49 @@
+# Secrets — this file exists BEFORE the first commit, on purpose.
+# Brief §12: if a token is ever committed, BotFather /revoke and regenerate.
+.env
+.env.local
+*.key
+
+# Runtime state
+bridge/pending_call.json
+places_cache.json
+call_log/
+*.wav
+*.mp3
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node (console/, if it ever gets built)
+node_modules/
+.next/
+.DS_Store
+
+# console secrets
+console/.env.local
+console/.next/
+console/node_modules/
+console/install.log
+console/*.log
+chat_state.json
+chat_state.json.tmp
+people.json
+people.json.tmp
+
+# Debris from a test run that died before its cleanup ran.
+tests/_test_*
+
+# Runtime logs — these contain bot tokens in request URLs.
+logs/
+*.log
+
+# Backups of people.json / chat_state.json. Real information about real
+# people, in a public repo. Never tracked.
+_memory_backup/
+
+# Next.js build metadata
+console/tsconfig.tsbuildinfo
+places_cache_*.json
