@@ -73,6 +73,11 @@ def run() -> Suite:
     s.eq("multi-value cuisine is split", places._cuisine_for({"cuisine": "chinese;cantonese"}), "Chinese, Cantonese")
     s.eq("fast_food with no cuisine is labelled", places._cuisine_for({"amenity": "fast_food"}), "fast food")
     s.eq("no cuisine and no amenity yields empty", places._cuisine_for({}), "")
+    s.check("Vietnamese expands to search synonyms",
+            {"vietnamese", "pho"}.issubset(set(places.cuisine_terms(["Vietnamese food"]))))
+    s.check("Pho matches a Vietnamese OSM row",
+            places.cuisine_match({"name": "Pho House", "cuisine": "vietnamese", "descriptor": ""},
+                                 places.cuisine_terms(["Vietnamese"])))
 
     # --- dedupe and rank --------------------------------------------------
     rows = [
@@ -297,6 +302,14 @@ def run() -> Suite:
             ranked.index("Spine") < ranked.index("Far"))
     s.eq("callable still beats well-located", ranked[-1], "NoPhone")
     s.eq("re-ranking never drops rows", len(places.relevance_rank(pool, silent)), len(pool))
+
+    cuisine_constraints = {**sha_tin, "prefer_cuisines": ["vietnamese"], "avoid_cuisines": []}
+    cuisine_pool = [
+        {"name": "Central Chinese", "phone": "+85221111111", "area": "Central", "cuisine": "Chinese"},
+        {"name": "Pho House", "phone": "+85222222222", "area": "Wan Chai", "cuisine": "Vietnamese"},
+    ]
+    s.eq("requested cuisine outranks a merely closer callable place",
+         places.relevance_rank(cuisine_pool, cuisine_constraints)[0]["name"], "Pho House")
 
     # --- the query --------------------------------------------------------
     query = places.build_query(places.AREAS["hk_island_north"])

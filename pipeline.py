@@ -592,7 +592,84 @@ FOOD_MENTIONS = {
     "pizza": r"pizza", "sushi": r"sushi", "hotpot": r"hot\s?pot",
     "ramen": r"ramen", "burgers": r"burgers?", "dim sum": r"dim sum",
     "korean": r"korean(?: food)?", "indian": r"indian(?: food)?",
+    "vietnamese": r"vietnam(?:ese)?(?:\s+food)?", "pho": r"pho",
+    "chinese": r"chinese(?: food)?", "japanese": r"japanese(?: food)?",
+    "italian": r"italian(?: food)?", "mexican": r"mexican(?: food)?",
+    "malaysian": r"malaysian(?: food)?", "seafood": r"seafood",
 }
+FOOD_CANONICAL = {
+    "pho": "vietnamese",
+    "burgers": "burger",
+}
+FOOD_PROPOSAL = re.compile(
+    r"\b(?:want|wanna|prefer|maybe|how\s+about|what\s+about|thinking|"
+    r"in\s+the\s+mood\s+for|keen\s+on|fancy|let'?s|lets|okay|ok|sure)\b",
+    re.I,
+)
+FOOD_ACCEPTANCE = re.compile(
+    r"\b(?:okay|ok|sure|yes|yeah|yep|nice|sounds?\s+good|that'?s\s+(?:nice|good)|"
+    r"close\s+enough|works?|let'?s\s+do\s+it)\b",
+    re.I,
+)
+
+
+def _food_hits(text: str) -> list[tuple[str, str]]:
+    """Return canonical cuisines and their source text for one chat line."""
+    hits: list[tuple[str, str]] = []
+    low = text.lower()
+    for food, pattern in FOOD_MENTIONS.items():
+        if re.search(r"\b(?:" + pattern + r")\b", low):
+            canonical = FOOD_CANONICAL.get(food, food)
+            if not any(existing == canonical for existing, _ in hits):
+                hits.append((canonical, food))
+    return hits
+
+
+def _place_pattern(place: str) -> str:
+    """Match district names with or without the spaces people type."""
+    return re.escape(place.lower()).replace(r"\ ", r"\s*")
+
+
+def _contextual_food_state(lines: list[str]) -> tuple[dict[str, dict], str | None]:
+    """Recover food suggestions when chat wraps one idea across messages."""
+    suggestions: dict[str, dict] = {}
+    agreed_food = None
+    for index, line in enumerate(lines):
+        low = line.lower()
+        hits = _food_hits(line)
+        previous = lines[index - 1].lower() if index else ""
+        following = lines[index + 1].lower() if index + 1 < len(lines) else ""
+        # A bare second line is common in chat: "How about" followed by
+        # "Vietnamese food". Carry the proposal across that line break.
+        conversational_proposal = bool(
+            FOOD_PROPOSAL.search(low)
+            or "?" in low
+            or FOOD_PROPOSAL.search(previous)
+        )
+        next_accepts = bool(FOOD_ACCEPTANCE.search(following))
+        for canonical, raw_food in hits:
+            pattern = FOOD_MENTIONS[raw_food]
+            if re.search(
+                r"\b(?:not|no|avoid|never|don'?t want|anything but)\s+"
+                r"(?:the\s+)?(?:" + pattern + r")\b", low
+            ):
+                continue
+            if not conversational_proposal and not next_accepts:
+                continue
+            suggestions[canonical] = {
+                "constraint": canonical,
+                "who": line.split(":", 1)[0].strip() if ":" in line else "",
+                "quote": line.strip(),
+            }
+            if FOOD_ACCEPTANCE.search(low) or next_accepts:
+                agreed_food = canonical
+        # "Pho?" followed by "that's nice" has no acceptance word on the
+        # food line itself, so carry agreement backwards one line.
+        if FOOD_ACCEPTANCE.search(low) and index:
+            prior_hits = _food_hits(lines[index - 1])
+            if prior_hits:
+                agreed_food = prior_hits[-1][0]
+    return suggestions, agreed_food
 
 
 def keyword_constraints(chat_text: str) -> dict:
@@ -654,20 +731,7 @@ def keyword_constraints(chat_text: str) -> dict:
     # "okay salad" can supersede an earlier "want Thai", while "no McDonald's"
     # removes that choice even if somebody proposed it first. These are soft
     # preferences, never dietary guarantees or proof a venue serves the dish.
-    suggestions: dict[str, dict] = {}
-    agreed_food = None
-    for line in lines:
-        low = line.lower()
-        for food, pattern in FOOD_MENTIONS.items():
-            if not re.search(r"\b(?:" + pattern + r")\b", low):
-                continue
-            if re.search(r"\b(?:not|no|avoid|never|don'?t want|anything but)\s+(?:the\s+)?(?:" + pattern + r")\b", low):
-                continue
-            if not re.search(r"\b(?:want|wanna|prefer|maybe|how about|okay|ok|let'?s|lets|sure)\b", low):
-                continue
-            suggestions[food] = {"constraint": food, "who": speaker(line), "quote": line.strip()}
-            if re.search(r"\b(?:okay|ok|let'?s|lets)\b", low):
-                agreed_food = food
+    suggestions, agreed_food = _contextual_food_state(lines)
     banned = {v["thing"] for v in out["vetoed"]}
     preferred = [agreed_food] if agreed_food and agreed_food not in banned else list(suggestions)
     for food in preferred:
@@ -677,7 +741,10 @@ def keyword_constraints(chat_text: str) -> dict:
 
     for line in lines:
         for place in HK_PLACES:
-            if re.search(r"\b(?:from|coming from|leaving|i(?:'m| am) (?:in|at|from))\s+" + re.escape(place.lower()) + r"\b", line.lower()):
+            if re.search(
+                r"\b(?:from|coming from|leaving|i(?:'m| am) (?:in|at|from))\s+"
+                + _place_pattern(place) + r"\b", line.lower()
+            ):
                 out["coming_from"].append({"who": speaker(line), "place": place})
 
     if out["party_size"] is None:
@@ -728,7 +795,16 @@ def _superseded_foods(chat_text: str) -> set[str]:
         elif re.search(r"\b(?:want|wanna|prefer|maybe|how about|okay|ok|let'?s|lets)\b", body):
             proposed.add(food)
             current[who] = food
-    return proposed - set(current.values())
+    stale = proposed - set(current.values())
+    # Also handle chat-native line breaks such as "How about" / "Vietnamese
+    # food" and a later "that's nice". The contextual pass only removes an
+    # earlier suggestion when it found a clear later agreement.
+    contextual, agreed = _contextual_food_state(
+        [ln for ln in chat_text.splitlines() if ln.strip()]
+    )
+    if agreed:
+        stale |= set(contextual) - {agreed}
+    return stale
 
 
 def _supplement_explicit_facts(model: dict, chat_text: str) -> dict:

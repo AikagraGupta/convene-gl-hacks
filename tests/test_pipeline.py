@@ -171,6 +171,32 @@ Jenny: i am in Sheung Shui"""
     s.contains("later salad agreement survives a model omission", merged["prefer_cuisines"], "salad")
     s.eq("old food is superseded only after its proposer changes position",
          pipeline._superseded_foods(rehearsal), {"thai", "mcdonalds"})
+
+    # Food suggestions often arrive as separate chat bubbles. The cuisine
+    # must survive "How about" -> "Vietnamese food" -> "Pho?" -> "that's
+    # nice", even when the model omits the preference entirely.
+    vietnamese_chat = """Kai: im thinking... chinese?
+pqwer: How about
+pqwer: Vietnamese food
+Kai: oh close enough
+Kai: Pho?
+Kai: that's nice
+Kai: im coming from shatin
+pqwer: Im coming from central"""
+    vietnamese = pipeline.keyword_constraints(vietnamese_chat)
+    s.eq("split-line Vietnamese preference is recovered",
+         vietnamese["prefer_cuisines"], ["vietnamese"])
+    s.contains("the recovered preference keeps a source quote",
+               vietnamese["soft"][0]["quote"], "Pho?")
+    sparse_vietnamese = pipeline._empty_constraints("model missed cuisine")
+    sparse_vietnamese["source"] = "gemini"
+    merged_vietnamese = pipeline._supplement_explicit_facts(
+        sparse_vietnamese, vietnamese_chat
+    )
+    s.eq("split-line preference survives a model omission",
+         merged_vietnamese["prefer_cuisines"], ["vietnamese"])
+    s.eq("the earlier Chinese suggestion is superseded",
+         pipeline._superseded_foods(vietnamese_chat), {"chinese"})
     stale_model = pipeline._empty_constraints("")
     stale_model["source"] = "gemini"
     stale_model["soft"] = [{"constraint": "Thai food", "who": "Kai", "quote": "want Thai"},
