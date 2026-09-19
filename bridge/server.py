@@ -681,17 +681,15 @@ def monitor_vapi_call(call_id: str) -> None:
         turns = vapi_calls.turns(call) or last_turns
         if turns != last_turns:
             last_turns = turns
+            # Vapi artifacts are only reliable once a call has ended. Keep the
+            # turns locally so the final transcript can be posted, but do not
+            # stream a Telegram message that sits on “connecting…” while the
+            # provider is still establishing the call.
             patch_pending(live_turns=turns)
-            if pending.get("live_message_id"):
-                edit_telegram(pending.get("chat_id"), pending["live_message_id"],
-                              render_live(pending, turns))
         if call.get("status") == "ended":
             current = read_pending()
             if current.get("vapi_call_id") != call_id or current.get("status") != "vapi_calling":
                 return
-            if current.get("live_message_id"):
-                edit_telegram(current.get("chat_id"), current["live_message_id"],
-                              render_live(current, turns, finished=True))
             archive_call(current, {"provider": "vapi", "call": call,
                                    "transcript": turns})
             send_telegram(current.get("chat_id"), format_vapi_result(current, turns))
@@ -871,10 +869,8 @@ class Handler(BaseHTTPRequestHandler):
                         patch_pending(status="vapi_dispatch_uncertain", vapi_error=str(exc))
                         self._json({"error": str(exc) + "; check Vapi before retrying"}, 502)
                         return
-                    live_id = send_telegram_returning_id(
-                        pending.get("chat_id"), render_live(pending, []))
                     updated = patch_pending(status="vapi_calling", dial=False,
-                                            vapi_call_id=call["id"], live_message_id=live_id,
+                                            vapi_call_id=call["id"], live_message_id=None,
                                             live_turns=[], vapi_started_at=datetime.now(timezone.utc).isoformat())
                 threading.Thread(target=monitor_vapi_call, args=(call["id"],), daemon=True).start()
                 self._json({"ok": True, "provider": "vapi", "call_id": call["id"],

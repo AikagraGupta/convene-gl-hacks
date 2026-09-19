@@ -102,7 +102,7 @@ def run() -> Suite:
              patch.object(server, "PENDING_PATH", Path(directory) / "pending.json"), \
              patch.object(server.vapi_calls, "preflight", return_value=phone), \
              patch.object(server.vapi_calls, "start_call", return_value={"id": "vapi-call-1"}) as create, \
-             patch.object(server, "send_telegram_returning_id", return_value=5), \
+             patch.object(server, "send_telegram_returning_id", return_value=5) as live, \
              patch.object(server.threading, "Thread", NoThread):
             server.write_pending({**pending, "status": "awaiting_approval"})
             s.eq("endpoint refuses a call before approval", dispatch("/dial")[0], 409)
@@ -112,6 +112,7 @@ def run() -> Suite:
             s.eq("approved call is created", code, 200)
             s.eq("call ID is persisted", server.read_pending()["vapi_call_id"], "vapi-call-1")
             s.eq("Vapi mode does not arm the ElevenLabs page", server.read_pending()["dial"], False)
+            s.eq("Vapi mode does not open a live Telegram message", live.call_count, 0)
             s.eq("duplicate dial is refused", dispatch("/dial")[0], 409)
             s.eq("only one outbound call was requested", create.call_count, 1)
         s.contains("Vapi result reports an unconfirmed call", server.format_vapi_result(pending, []),
@@ -160,8 +161,9 @@ def run() -> Suite:
                    "calendar.google.com")
         s.contains("calendar link is tappable in Telegram", matching_text,
                    'href=\"https://calendar.google.com')
-        # A completed Vapi call must actually close the Telegram live message
-        # and send a result. Vapi's real artifacts label agent turns "bot".
+        # A completed Vapi call posts the result and full transcript. Vapi's
+        # live artifact is only reliable after the call ends, so no Telegram
+        # message is streamed while the provider is connecting.
         ended = {"status": "ended", "endedReason": "customer-ended-call", "artifact": {
             "messages": [{"role": "bot", "message": "I'm an AI assistant."},
                          {"role": "user", "message": "Your table is booked for 6 people at 7:30 pm. No deposit is required."}]}}
@@ -176,8 +178,8 @@ def run() -> Suite:
             server.monitor_vapi_call("call-1")
             s.eq("completed call closes local state", server.read_pending()["status"], "done")
             s.eq("completed call posts result and full transcript", send.call_count, 2)
-            s.contains("Telegram live transcript includes Vapi's bot turn",
-                       str(edit.call_args_list), "I'm an AI assistant")
+            s.eq("Vapi completion does not edit a live Telegram message",
+                 edit.call_count, 0)
             s.check("group result asserts the confirmed booking", "Booked" in send.call_args_list[0].args[1])
             s.contains("final transcript includes staff after booking",
                        send.call_args_list[1].args[1], "Your table is booked")
@@ -188,8 +190,7 @@ def run() -> Suite:
                                   "live_message_id": 6, "private_mode": True, "live_turns": []})
             server.monitor_vapi_call("call-2")
             s.check("private call transcript is visible in Telegram",
-                    "Your table is booked" in str(edit.call_args_list)
-                    and "Your table is booked" in str(send.call_args_list))
+                    "Your table is booked" in str(send.call_args_list))
         long_turns = [{"source": "user", "message": "R&B <test> " * 900}]
         chunks = server.transcript_messages(pending, long_turns)
         s.check("long transcript is split within Telegram limits",
