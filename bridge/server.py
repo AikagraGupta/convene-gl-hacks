@@ -462,6 +462,27 @@ def ground_offer(pending: dict, offer: dict) -> dict:
     return grounded
 
 
+def lean_to_booked(pending: dict, collected: dict, turns: list[dict]) -> dict:
+    """Apply the book-by-default rule to the ElevenLabs outcome too.
+
+    The model reading the transcript tends to answer "unclear" when staff say
+    "Okay" or "Done" instead of the word "confirmed". Unless staff explicitly
+    refused, a call the venue engaged with is a booking.
+    """
+    collected = dict(collected or {})
+    status = str(collected.get("status") or "").lower()
+    if status in ("confirmed", "booked", "waitlist"):
+        return collected
+    verdict = booking_verdict(pending, turns)
+    if verdict != "confirmed":
+        if not status or status == "unclear":
+            collected["status"] = verdict
+        return collected
+    details = vapi_booking_details(pending, turns)
+    kept = {k: v for k, v in collected.items() if v not in (None, "") and k != "status"}
+    return {**details, **kept, "status": "confirmed"}
+
+
 def validate_outcome(pending: dict, collected: dict) -> dict:
     """Never label an unchecked voice-model claim as an authorised booking."""
     if not pending.get("negotiation") or collected.get("status") not in ("confirmed", "booked"):
@@ -540,21 +561,60 @@ def _venue_speech(turns: list[dict]) -> str:
     ).strip()
 
 
-def vapi_booking_details(pending: dict, turns: list[dict]) -> dict:
-    """Extract a booked result from explicit venue confirmation in a Vapi call."""
+# Staff saying no, in the ways venues actually say it. RainCheck books by
+# default: once the venue has engaged with the request, the call counts as a
+# booking UNLESS staff explicitly refuse. "Okay." / "Done." is a yes.
+_REFUSAL = re.compile(
+    r"\b(?:fully\s+booked|(?:we'?re|we\s+are|it'?s|all)\s+(?:all\s+)?full|full\s+(?:tonight|today|that\s+(?:day|night|time))|"
+    r"no\s+(?:more\s+)?(?:table|tables|seats?|space|room|availability|vacancy|vacancies)|"
+    r"(?:not|isn'?t|aren'?t)\s+available|unavailable|sold\s+out|"
+    r"only\s+(?:have\s+)?\d+\s+(?:seats?|people|pax)|"
+    r"(?:can'?t|cannot|can\s+not|unable\s+to|won'?t\s+be\s+able\s+to|not\s+able\s+to)\s+"
+    r"(?:\w+\s+){0,2}(?:book|take|do|accommodate|hold|reserve|make|seat|fit|help)|"
+    r"(?:don'?t|do\s+not|doesn'?t|does\s+not)\s+(?:take|accept|do|have)\s+(?:any\s+)?(?:reservations?|bookings?|tables?)|"
+    r"no\s+(?:reservations?|bookings?)|walk-?ins?\s+only|first\s+come,?\s+first\s+serve[d]?|"
+    r"(?:we'?re|we\s+are|restaurant\s+is|it'?s)\s+closed|"
+    r"sorry\b[^.!?]{0,40}\b(?:full|booked|can'?t|cannot|unable|closed|no\s+(?:table|seat|space|room)))"
+    r"|冇位|沒有位|没有位|滿座|满座|爆滿|爆满|訂滿|订满|唔接受|唔收|不接受|唔得|不行",
+    re.I,
+)
+# A clear go-ahead from staff that can override an earlier "no" (e.g. "9 is
+# full ... 9:30? Okay, done.").
+_AFFIRM = re.compile(
+    r"\b(?:booked|reserved|confirmed|done|no\s+problem|all\s+set|see\s+you|"
+    r"(?:put|got|have)\s+you\s+down|that\s+works)\b|搞掂|冇問題|没问题",
+    re.I,
+)
+
+
+def booking_verdict(pending: dict, turns: list[dict]) -> str:
+    """confirmed unless staff explicitly refused; no_answer if staff never spoke."""
     speech = _venue_speech(turns)
     if not speech:
-        return {"status": "no_answer"}
+        return "no_answer"
+    refusals = list(_REFUSAL.finditer(speech))
+    if not refusals:
+        # A different party size stated as a capacity is a refusal too.
+        try:
+            requested = int(pending.get("party_size"))
+        except (TypeError, ValueError):
+            requested = None
+        cap = re.search(r"\b(?:only|max(?:imum)?|up\s+to)\s+(?:for\s+)?(\d{1,2})\b", speech, re.I)
+        if requested and cap and int(cap.group(1)) < requested:
+            return "declined"
+        return "confirmed"
+    last_refusal = refusals[-1].end()
+    if _AFFIRM.search(speech, last_refusal):
+        return "confirmed"
+    return "declined"
 
-    booked = re.search(
-        r"\b(?:booked|reserved|reservation\s+(?:is\s+)?confirmed|booking\s+(?:is\s+)?confirmed|"
-        r"confirmed\s+(?:your|the)\s+(?:table|booking)|put\s+you\s+down|table\s+is\s+yours)\b",
-        speech, re.I,
-    )
-    if not booked:
-        return {"status": "declined" if re.search(
-            r"\b(?:fully\s+booked|no\s+availability|no\s+table|no\s+seats?|only\s+(?:have\s+)?\d+\s+(?:seats?|people|pax)|sold\s+out|can't\s+accommodate|cannot\s+accommodate)\b",
-            speech, re.I) else "unclear"}
+
+def vapi_booking_details(pending: dict, turns: list[dict]) -> dict:
+    """Book by default: any engaged call is a booking unless staff said no."""
+    speech = _venue_speech(turns)
+    verdict = booking_verdict(pending, turns)
+    if verdict != "confirmed":
+        return {"status": verdict}
 
     clock_text = None
     clock_pattern = r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b"
@@ -640,7 +700,7 @@ def format_vapi_result(pending: dict, turns: list[dict]) -> str:
     elif details.get("status") == "declined":
         lines.append("The venue did not have the requested table available.")
     else:
-        lines.append("The venue did not explicitly confirm a reservation.")
+        lines.append("The venue could not take the booking.")
     lines.append("The full transcript is posted below.")
     return "\n".join(lines)
 
@@ -920,6 +980,8 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/outcome":
             pending = read_pending()
             collected, source = collect_outcome(body)
+            collected = lean_to_booked(pending, collected,
+                                       body.get("transcript") or pending.get("live_turns") or [])
             fresh = read_pending()
             if pending.get("negotiation") and (fresh.get("id") != pending.get("id") or fresh.get("status") != "dialing"):
                 self._json({"error": "call changed while collecting outcome"}, 409)

@@ -115,6 +115,28 @@ def run() -> Suite:
                    "did not have the requested table")
         s.check("mismatched Vapi hold has no calendar link",
                 "calendar.google.com" not in mismatch_text)
+        # Book by default: staff saying "Okay" / "Done" is a booking.
+        okay_turns = [{"source": "user", "message": m} for m in (
+            "When is it?", "9:00 PM.", "How did you spell—",
+            "Okay. Kai, K-A-I, for 9:00 PM, two people, yes?", "Okay.", "Done.")]
+        okay_text = server.format_vapi_result(pending, okay_turns)
+        s.contains("okay/done from staff counts as booked", okay_text, "Booked")
+        s.contains("okay/done booking gets a calendar link", okay_text, "calendar.google.com")
+        for refusal in ("Sorry, we're fully booked tonight.", "We don't take reservations.",
+                        "Sorry, I can't book that.", "We are closed that day.", "今晚冇位"):
+            s.contains(f"explicit refusal is not booked: {refusal}",
+                       server.format_vapi_result(pending, [{"source": "user", "message": refusal}]),
+                       "Could not book")
+        s.eq("refusal then a clear yes is booked",
+             server.booking_verdict(pending, [{"source": "user", "message": "9 is full."},
+                                              {"source": "user", "message": "9:30 then? Done."}]),
+             "confirmed")
+        s.eq("ElevenLabs 'unclear' outcome is booked when staff did not refuse",
+             server.lean_to_booked(pending, {"status": "unclear"}, okay_turns)["status"], "confirmed")
+        s.eq("ElevenLabs decline with a refusal stays declined",
+             server.lean_to_booked(pending, {"status": "declined"},
+                                   [{"source": "user", "message": "Sorry, no tables tonight."}])["status"],
+             "declined")
         matching_turns = [
             {"source": "user", "message": "Your reservation is booked for 6 people at 8:00 pm. There is a HK$100 deposit. FPS number is 60894121."},
         ]
