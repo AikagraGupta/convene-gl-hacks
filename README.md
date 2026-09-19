@@ -1,121 +1,94 @@
 # RainCheck
 
-**The group-chat agent that turns “what should we do?” into a plan everyone can act on.**
+RainCheck turns a group conversation into a finished plan. It understands what
+people want, finds options that fit, coordinates the decision, handles the
+phone call, and sends the result back to everyone.
 
-RainCheck is a standalone hackathon project for the moment when a group has a
-dozen opinions, hidden constraints, and no decision. It reads the conversation,
-understands what each person actually said, finds strong options, gets the group
-to a decision, and carries the plan through to a venue call, transcript, and
-calendar event.
+It is built for the small tasks that quietly consume an entire group chat:
+choosing somewhere to eat, arranging an appointment, contacting a business,
+checking availability, and remembering what was agreed.
 
-It feels like adding a highly organised friend to the chat: nobody has to fill
-out a form, repeat themselves, or become the project manager.
+## The product flow
 
-## The two-minute demo
+People talk normally in Telegram. RainCheck extracts the details that matter:
 
-1. Start the bridge and bot.
-2. Add RainCheck to a Telegram group and talk naturally: “Thai food, around 7:30,
-   somewhere easy from Central and Kennedy Town.”
-3. Send `/decide`.
-4. RainCheck extracts the real constraints with the supporting quotes, proposes
-   three places, and opens a native Telegram poll.
-5. Send `/close` after the vote. RainCheck turns the winner into a clear booking
-   brief and asks the group to approve it.
-6. Approve the call. The voice agent speaks with the venue, checks the agreed
-   details, posts the transcript to the group, and creates a one-tap calendar
-   link for everyone.
+- date and time
+- number of people
+- preferences and exclusions
+- where people are travelling from
+- private requirements shared by direct message
 
-The whole story is visible in the chat: messy conversation → shared decision →
-completed plan.
+`/decide` turns those details into a shortlist and a native Telegram poll.
+`/close` prepares the winning plan. After the group approves the exact call,
+RainCheck contacts the venue through the configured voice provider, asks for
+availability and deposit details, and returns the outcome to the same chat.
 
-## Why RainCheck matters
+The final message includes the complete call transcript and a one-tap Google
+Calendar link when a reservation is confirmed.
 
-Recommendations are easy. **Convergence is hard.** The useful information is
-usually scattered across ordinary messages:
+## Why it is useful
 
-- “I am coming from Sha Tin.”
-- “I cannot do pork.”
-- “Somewhere after 7 works.”
-- “Please do not make me call the restaurant.”
+The information needed to make a plan is scattered across ordinary messages:
+“I am coming from Sha Tin”, “somewhere after seven works”, “I cannot eat pork”,
+and “please call them because I am busy”. RainCheck turns those fragments into
+one shared, inspectable plan without asking everyone to fill out a form.
 
-RainCheck turns those fragments into a shared, inspectable decision. It preserves
-the words behind each extracted constraint, keeps private requirements private,
-and gives the group a closing mechanism so plans actually happen.
-
-## What it does
-
-### Understands the conversation
-
-The pipeline reads recent group messages, identifies people, places, times,
-budgets, dietary needs, travel context, and preferences, and attaches each
-constraint to the message that supports it.
-
-### Finds options that fit
-
-It searches live place data, enriches discovery with semantic search, ranks
-options against the group's actual language, and returns a short shortlist with
-callable venue details.
-
-### Makes a decision in the chat
-
-`/decide` opens a native Telegram poll. `/close` closes the loop, records the
-winner, and prepares the exact request that will be sent to the venue.
-
-### Handles sensitive requirements privately
-
-Participants can send `/private` and save a budget, time window, or dietary and
-accessibility requirement in a DM. RainCheck combines those inputs when checking
-the venue while keeping the details out of the group approval card.
-
-### Completes the last mile
-
-After approval, an ElevenLabs voice agent calls the venue through the operator
-call desk. It asks for the agreed time, availability, deposit terms, and
-relevant requirements. The complete transcript and outcome return to Telegram,
-and a calendar link lets every participant add the plan in one tap.
+Private requirements stay in a separate store and are used when the call is
+prepared. The group sees the result without seeing who supplied a private
+constraint.
 
 ## Commands
 
 ```text
-/decide       Read the discussion, propose options, and open a poll
-/close        Close the poll and prepare the winning request
-/private      Save a private requirement in a DM
-/negotiate    Set the group's approved time and deposit boundaries
-/status       Show the current outing and active approval state
+/decide       Extract the current plan, find options, and open a poll
+/close        Close the poll and prepare the selected plan
+/private      Create a private requirements link in direct messages
+/negotiate    Set the time and deposit boundaries for the call
+/status       Show the current outing and approval state
 /who          Show remembered preferences and their source messages
 /forget NAME  Remove one person's remembered preferences
-/forget       Clear all remembered preferences and start a fresh chat context
-/forget all   Same as `/forget`
+/forget       Clear remembered preferences and start a fresh chat context
 ```
-
-On the call desk: **Arm microphone** → confirm the level bar moves → dial →
-speakerphone → **Start agent**.
 
 ## Architecture
 
 ```text
 Telegram group
-      │  messages, /decide, poll votes, /close
-      ▼
-bot.py ───────────────► pipeline.py ───► Gemini
-   │                         │             └── OpenRouter fallback
-   │                         ├──────────► places.py / Overpass / OpenStreetMap
-   │                         └──────────► exa_search.py / Exa
-   │
-   │  native poll → winner → human approval
-   ▼
-bridge/pending_call.json ─► bridge/server.py :8080
-                                  │
-                                  ├── ElevenLabs voice agent over WebRTC
-                                  ├── optional Vapi + Twilio outbound path
-                                  └── transcript, result, calendar link → Telegram
+  messages, commands, votes
+          │
+          ▼
+     bot.py ────────────────┐
+          │                 │
+          ▼                 ▼
+  pipeline.py          private_inputs.py
+  Gemini + fallbacks    SQLite private requirements
+          │
+          ▼
+  places.py
+  Overpass / OpenStreetMap / Exa
+          │
+          ▼
+  selected plan + human approval
+          │
+          ▼
+  bridge/server.py :8080
+          │
+          ├── ElevenLabs operator call desk
+          └── Vapi + Twilio outbound call
+          │
+          ▼
+  transcript + booking result + calendar link → Telegram
 ```
 
-The design keeps the conversation, reasoning, approval, voice call, and result
-separate. Each stage has a clear input and output, so the whole flow is easy to
-inspect, extend, and demo.
+The model interprets unstructured conversation. Deterministic Python code owns
+the state machine: votes, approval, phone number checks, call status, outcome
+parsing, and calendar generation. This keeps the plan consistent from the
+first message through the final result.
 
-## Run it locally
+## Run locally
+
+RainCheck requires Python 3.10 or newer. Clone the repository and create a
+local environment file:
 
 ```bash
 git clone https://github.com/AikagraGupta/convene-gl-hacks.git
@@ -123,77 +96,78 @@ cd convene-gl-hacks
 cp .env.example .env
 ```
 
-Fill in the credentials in `.env`, then start the bridge and bot in two
-terminals:
+Fill in the credentials in `.env`. At minimum, configure the Telegram bot and
+Gemini. The Telegram bot must be able to read group messages; disable BotFather
+privacy mode for the bot.
+
+Start the two local services in separate terminals:
 
 ```bash
-python3 bridge/server.py
-python3 bot.py
+python bridge/server.py
+python bot.py
 ```
 
-Open <http://localhost:8080/> for the operator call desk. To rehearse the full
-decision flow without a Telegram group, run:
+The operator page is available at <http://localhost:8080/>. Run the preflight
+check before a live session:
 
 ```bash
-python3 demo.py
+python preflight.py
 ```
 
-For a clean dependency and configuration check:
+The local files created while the bot runs are ignored by Git, including chat
+state, pending calls, private requirements, logs, and cached place data.
+
+## Configure voice calls
+
+RainCheck supports two call paths.
+
+For ElevenLabs, configure an agent and provision it from the checked-in
+specification:
 
 ```bash
-python3 preflight.py
+python setup_agent.py --dry-run
+python setup_agent.py
 ```
 
-The project uses the Python standard library for its local services. The
-operator console is available under `console/`:
+Set `CALL_PROVIDER=elevenlabs`. The local call desk handles the operator's
+phone audio.
+
+For Vapi, import an outbound-capable Twilio number into Vapi, set the Vapi
+credentials in `.env`, and configure the assistant:
 
 ```bash
-cd console
-npm install
-npm run dev
+python setup_vapi.py --apply
 ```
 
-## Configure the voice agent
+Then set `CALL_PROVIDER=vapi`. Vapi manages the outbound call, while RainCheck
+polls the completed call, extracts the booking result, and posts the transcript
+and calendar link to Telegram.
 
-Create an ElevenLabs agent, then provision its prompt, data collection fields,
-and outcome schema from the checked-in specification:
-
-```bash
-python3 setup_agent.py --dry-run
-python3 setup_agent.py
-```
-
-The optional Vapi path can be enabled with an imported Twilio number:
-
-```bash
-python3 setup_vapi.py --apply
-```
-
-Set `CALL_PROVIDER=vapi` in `.env` to use that provider. RainCheck keeps the
-approved booking details consistent across Telegram, the call desk, the voice
-agent, and the final calendar event.
+Never commit `.env` or API keys. Use `.env.example` as the public configuration
+template.
 
 ## Stack
 
-| Layer | Technology |
+| Area | Technology |
 |---|---|
-| Group chat | Telegram Bot API and native polls |
-| Reasoning | Gemini with OpenRouter fallback |
-| Place discovery | Overpass / OpenStreetMap and Exa |
-| Voice | ElevenLabs Agents over WebRTC; Vapi + Twilio option |
-| Operator UI | Local bridge and Next.js console |
-| Calendar | One-tap event links generated from the confirmed plan |
+| Group coordination | Telegram Bot API and native polls |
+| Conversation understanding | Gemini with OpenRouter fallback |
+| Restaurant and place discovery | Overpass, OpenStreetMap, and Exa |
+| Private requirements | SQLite |
+| Voice calls | ElevenLabs Agents or Vapi with Twilio |
+| Local services | Python standard library and the bridge on port 8080 |
+| Calendar | Google Calendar event links |
 
 ## Tests
 
 ```bash
-python3 tests/run.py
+python tests/run.py
 ```
 
-The test suite covers the conversation pipeline, place discovery, private
-requirements, negotiation, Telegram commands, voice outcomes, calendar links,
-and the operator console contracts.
+The suite covers conversation extraction, place ranking, cuisine matching,
+private requirements, negotiations, Telegram commands, voice outcomes,
+transcripts, calendar links, and bridge contracts.
 
 ## License
 
-MIT.
+MIT
