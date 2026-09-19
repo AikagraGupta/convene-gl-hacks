@@ -66,6 +66,12 @@ def run():
             bot.handle_message(public, group)
             s.check("group gets a Telegram DM link", "https://t.me/convene_bot?start=private_" in str(public.calls))
             s.check("group invitation includes no participant identity", "Alex" not in public.sent_text())
+            booking = bot.state_for(-100)
+            booking.history.append("stale: six people")
+            booking.constraints = {"party_size": 6}
+            bot.handle_message(public, {**group, "text": "/private new"})
+            s.eq("new outing clears old chat history", list(booking.history), [])
+            s.eq("new outing clears old extracted headcount", booking.constraints, {})
             bot.handle_message(public, {**group, "text": "/negotiate 19:00-20:00 budget 200"})
             s.eq("group command stores explicit public limits", bot.STATE[-100].negotiation_limits["budget"], 200)
             s.check("group sees terms before approval", "HK$200" in public.sent_text())

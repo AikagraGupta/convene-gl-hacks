@@ -157,6 +157,25 @@ def state_for(chat_id: int) -> ChatState:
     return STATE[chat_id]
 
 
+def reset_outing(state: ChatState, tg: Telegram | None = None, chat_id: int | None = None) -> None:
+    """Clear public decision state when a group starts a new outing."""
+    if tg and chat_id is not None and state.poll_message_id:
+        tg.call("stopPoll", chat_id=chat_id, message_id=state.poll_message_id)
+    state.history.clear()
+    state.poll_id = None
+    state.poll_message_id = None
+    state.poll_options = []
+    state.votes = {}
+    state.voter_names = {}
+    state.picks = []
+    state.constraints = {}
+    state.approval_token = None
+    state.approval_payload = None
+    state.awaiting = None
+    state.pending_winner = None
+    state.negotiation_limits = {}
+
+
 # ---------------------------------------------------------------------------
 # Persistence
 # ---------------------------------------------------------------------------
@@ -495,6 +514,16 @@ QUESTION_LABELS = {
 }
 
 
+def party_size_needs_confirmation(constraints: dict) -> bool:
+    """Do not turn an unresolved old headcount into a phone call."""
+    questions = constraints.get("open_questions") or []
+    return any(
+        re.search(r"\b(?:people|person|party|attend|attending|active|members?)\b", str(question), re.I)
+        and re.search(r"\b(?:still|only|whether|confirm|actually|currently|given|how many)\b", str(question), re.I)
+        for question in questions
+    )
+
+
 def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
     """Show the approval card, or ask for whatever is still missing.
 
@@ -510,6 +539,8 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
         return
 
     party = state.constraints.get("party_size")
+    if party and party_size_needs_confirmation(state.constraints):
+        party = None
     when_text = state.constraints.get("when_text")
 
     missing = []
@@ -813,12 +844,12 @@ def handle_message(tg: Telegram, message: dict) -> None:
     if verb in ("start", "help"):
         tg.send(chat_id, HELP)
     elif verb == "private":
-        if text.split(maxsplit=1)[-1].lower() == "new" and state.private_plan:
-            private_inputs.retire(state.private_plan)
+        parts = text.split()
+        if len(parts) > 1 and parts[1].lower() == "new":
+            if state.private_plan:
+                private_inputs.retire(state.private_plan)
             state.private_plan = None
-            state.approval_token = None
-            state.approval_payload = None
-            state.negotiation_limits = {}
+            reset_outing(state, tg, chat_id)
         if not state.private_plan or not private_inputs.plan(state.private_plan):
             state.private_plan = private_inputs.create(chat_id, chat.get("title") or "Group outing")
             save_state()
@@ -899,6 +930,16 @@ def try_answer(tg: Telegram, chat_id: int, state: ChatState, text: str, author: 
             continue        # parse_answer already filters, this is belt and braces
         state.constraints[field] = value
         got.append(field)
+
+    if "party_size" in got:
+        # A model-generated question such as "are all six still attending?"
+        # is resolved by the group's explicit answer. Do not ask the same
+        # question again on the approval card.
+        state.constraints["open_questions"] = [
+            question for question in (state.constraints.get("open_questions") or [])
+            if not re.search(r"\b(?:people|person|party|attend|attending|active|members?)\b",
+                             str(question), re.I)
+        ]
 
     if not got:
         # Silence is correct here. They may simply be still talking.

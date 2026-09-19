@@ -306,6 +306,11 @@ def run() -> Suite:
     s.contains("missing time is asked about", tg.sent_text(), "what time")
     s.eq("only the time is outstanding", st.awaiting["fields"], ["when_text"])
 
+    st, tg = closed_with({"party_size": 6, "when_text": "Friday 8pm", "hard": [],
+                          "open_questions": ["Are all 6 people still attending? Only 3 are active in the chat."]})
+    s.contains("unresolved headcount is confirmed before calling", tg.sent_text(), "how many of you")
+    s.eq("uncertain headcount becomes the outstanding question", st.awaiting["fields"], ["party_size"])
+
     st, tg = closed_with({"hard": []})
     s.eq("both missing are asked together", st.awaiting["fields"], ["party_size", "when_text"])
     s.contains("in one question", tg.sent_text(), "how many of you")
