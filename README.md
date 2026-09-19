@@ -84,7 +84,8 @@ and a calendar link lets every participant add the plan in one tap.
 /status       Show the current outing and active approval state
 /who          Show remembered preferences and their source messages
 /forget NAME  Remove one person's remembered preferences
-/forget all   Clear the group's remembered preferences
+/forget       Clear all remembered preferences and start a fresh chat context
+/forget all   Same as `/forget`
 ```
 
 On the call desk: **Arm microphone** → confirm the level bar moves → dial →
