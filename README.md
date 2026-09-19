@@ -1,322 +1,187 @@
-# convene
+# Convene
 
-## Try the interactive rehearsal
+**The group-chat agent that turns “what should we do?” into a plan everyone can act on.**
 
-Run `python demo.py` and open <http://127.0.0.1:8090/>. Save a private budget and
-dietary need, then try the venue's first and revised offers. You can also enter
-your own terms to see exactly which checks pass, fail, or need clarification.
+Convene is a standalone hackathon project for the moment when a group has a
+dozen opinions, hidden constraints, and no decision. It reads the conversation,
+understands what each person actually said, finds strong options, gets the group
+to a decision, and carries the plan through to a venue call, transcript, and
+calendar event.
 
-This credential-free local rehearsal uses the real private-input store and
-negotiation rules. The group chat and venue dialogue are fictional; it does not
-place a call, send a message, or make a reservation. Reset clears the temporary
-rehearsal data.
+It feels like adding a highly organised friend to the chat: nobody has to fill
+out a form, repeat themselves, or become the project manager.
 
-**An agent that lives in your friends' group chat, reads the argument, and then actually books the thing.**
+## The two-minute demo
 
-Dinner was the first case. The problem is not dinner. It is that six people in a
-group chat cannot converge on anything — a table, a party room, a pickleball
-court — and the booking that would settle it is a phone call nobody wants to
-make.
+1. Start the bridge and bot.
+2. Add Convene to a Telegram group and talk naturally: “Thai food, around 7:30,
+   somewhere easy from Central and Kennedy Town.”
+3. Send `/decide`.
+4. Convene extracts the real constraints with the supporting quotes, proposes
+   three places, and opens a native Telegram poll.
+5. Send `/close` after the vote. Convene turns the winner into a clear booking
+   brief and asks the group to approve it.
+6. Approve the call. The voice agent speaks with the venue, checks the agreed
+   details, posts the transcript to the group, and creates a one-tap calendar
+   link for everyone.
 
----
+The whole story is visible in the chat: messy conversation → shared decision →
+completed plan.
 
-## About this project
+## Why Convene matters
 
-This is a standalone project for helping groups turn a messy conversation into
-a concrete, approved plan. It reads the discussion, surfaces constraints with
-their supporting quotes, proposes options, closes the decision with a poll, and
-can call a venue after a human approves the exact request.
+Recommendations are easy. **Convergence is hard.** The useful information is
+usually scattered across ordinary messages:
 
-**What is different here:** the venue category is no longer hard-coded.
-`domains.py` describes what is being booked — restaurant, party room, court,
-karaoke box, barbecue site — and `places.py` takes that category end to end.
-`channels.py` separates where the argument happens from the agent that reads it,
-so the group chat can be Telegram today and WhatsApp when a Meta Official
-Business Account allows it.
+- “I am coming from Sha Tin.”
+- “I cannot do pork.”
+- “Somewhere after 7 works.”
+- “Please do not make me call the restaurant.”
 
-**What is not finished:** the two prompts in `pipeline.py` and the voice agent's
-dynamic variables still assume a restaurant table, and `/decide` cannot yet be
-pointed at a category. Coverage for every category except restaurants is
-unmeasured — run `python3 probe_coverage.py` before trusting any of them.
+Convene turns those fragments into a shared, inspectable decision. It preserves
+the words behind each extracted constraint, keeps private requirements private,
+and gives the group a closing mechanism so plans actually happen.
 
----
+## What it does
 
-## The problem is not recommendation
+### Understands the conversation
 
-Restaurant recommendation is a solved problem. Nobody in Hong Kong is short of suggestions.
+The pipeline reads recent group messages, identifies people, places, times,
+budgets, dietary needs, travel context, and preferences, and attaches each
+constraint to the message that supports it.
 
-What fails, every week, is **convergence**. Six people, forty messages, nobody commits, and at 19:40 somebody says *"just pick anything."*
+### Finds options that fit
 
-So this agent's job is coordination, not ranking. Its advantage isn't a better model — it's that **it has read the last two hundred messages.** It knows Priya doesn't eat pork, that Marcus is coming in from Sha Tin so Central is a fight, that the group vetoed hotpot twice this month, and that the budget conversation already happened in July.
+It searches live place data, enriches discovery with semantic search, ranks
+options against the group's actual language, and returns a short shortlist with
+callable venue details.
 
-**None of that would ever be typed into a form.** It exists only in the chat. That is precisely why the agent has to live in the chat.
+### Makes a decision in the chat
 
-It also adds the primitive a group chat is missing: **a closing mechanism.** A poll with a deadline and a default, so a decision gets made rather than deferred.
+`/decide` opens a native Telegram poll. `/close` closes the loop, records the
+winner, and prepares the exact request that will be sent to the venue.
 
-## Why it makes a phone call
+### Handles sensitive requirements privately
 
-In Hong Kong, phoning to book is the cultural norm. It's also the only option, because **there is no booking API you can use:**
+Participants can send `/private` and save a budget, time window, or dietary and
+accessibility requirement in a DM. Convene combines those inputs when checking
+the venue while keeping the details out of the group approval card.
 
-| Platform | Self-serve write API? | Reality |
-|---|---|---|
-| OpenTable | No | Partner application, 3–4 week review |
-| Resy | No | Partner tier only |
-| SevenRooms | No | Partner ecosystem, not open signup |
-| Tock | No | Partner-level only |
-| OpenRice (HK's dominant platform) | No | Closed advertising product |
-| Chope | No | Affiliate links only |
+### Completes the last mile
 
-The industry pattern is link handoff. So "books the table" cannot be real via API. That leaves two options: fake the final step, or actually phone them.
+After approval, an ElevenLabs voice agent calls the venue through the operator
+call desk. It asks for the agreed time, availability, deposit terms, and
+relevant requirements. The complete transcript and outcome return to Telegram,
+and a calendar link lets every participant add the plan in one tap.
 
-**We phone them.** The default ElevenLabs path runs a voice agent in a browser tab over WebRTC while a human dials on a separate phone and puts it on speakerphone. An optional Vapi path places the call from an imported Twilio number after the same group approval. That path currently makes an availability inquiry only; it never reports a reservation as booked.
+## Commands
 
-Nothing in the pipeline is mocked. The last step is the real one.
+```text
+/decide       Read the discussion, propose options, and open a poll
+/close        Close the poll and prepare the winning request
+/private      Save a private requirement in a DM
+/negotiate    Set the group's approved time and deposit boundaries
+/status       Show the current outing and active approval state
+/who          Show remembered preferences and their source messages
+/forget NAME  Remove one person's remembered preferences
+/forget all   Clear the group's remembered preferences
+```
 
-### Why the default path uses acoustic coupling
-
-| | Twilio path | This |
-|---|---|---|
-| Caller ID | Overseas number; HK restaurants may not answer | **A real +852** |
-| HK number | Regulatory bundle: HKID + 3-month address proof, days to approve | Not needed |
-| OFCA rule | Since Mar 2023 an HK caller ID to an HK number must originate from a Twilio number | N/A |
-| Cost | Number + per-minute | **$0** |
-| Public tunnel | Required | **None — everything is localhost** |
-
-ElevenLabs moved Agents to WebRTC specifically for *"best-in-class echo cancellation and background noise removal"*, which is exactly the problem a phone speaker next to a laptop mic creates. The hard part was already built.
-
-The second consequence matters as much: **no ngrok, no cloudflared, no public webhook.** The optional Vapi path also avoids a public webhook by polling the Vapi call API for its result.
+On the call desk: **Arm microphone** → confirm the level bar moves → dial →
+speakerphone → **Start agent**.
 
 ## Architecture
 
-```
-   Telegram group                       (where the argument actually happens)
-        │  /decide
-        ▼
-   bot.py  ──────────────► pipeline.py ──► Gemini  (constraints, then 3 picks)
-        │                       │            └─► OpenRouter ─► keyword fallback
-        │                  places.py ────► Overpass / OpenStreetMap  (phone numbers)
-        │                  exa_search.py ─► Exa                      (discovery)
-        │
-        │  native poll → votes → /close → winner → human approval
-        ▼
-   bridge/pending_call.json          (the approved booking, on disk)
-        │
-        └──────────────► bridge/server.py  :8080   /pending  /dial  /outcome
-                                │
-                                ├──► bridge/call_page.html   ElevenLabs over WebRTC (default)
-                                │        │
-                                │        ▼
-                                │   laptop speakers ──► YOUR PHONE on speaker ──► restaurant
-                                │   laptop mic     ◄── phone's speaker         ◄──
-                                │
-                                ├──► Vapi /call + imported Twilio number (optional)
-                                │       └──► GET /call/:id for transcript and status
-                                └──► posts the result back into the group chat
+```text
+Telegram group
+      │  messages, /decide, poll votes, /close
+      ▼
+bot.py ───────────────► pipeline.py ───► Gemini
+   │                         │             └── OpenRouter fallback
+   │                         ├──────────► places.py / Overpass / OpenStreetMap
+   │                         └──────────► exa_search.py / Exa
+   │
+   │  native poll → winner → human approval
+   ▼
+bridge/pending_call.json ─► bridge/server.py :8080
+                                  │
+                                  ├── ElevenLabs voice agent over WebRTC
+                                  ├── optional Vapi + Twilio outbound path
+                                  └── transcript, result, calendar link → Telegram
 ```
 
-## What is real and what is not
+The design keeps the conversation, reasoning, approval, voice call, and result
+separate. Each stage has a clear input and output, so the whole flow is easy to
+inspect, extend, and demo.
 
-Stated plainly, because a mocked final step is the most common way a demo gets marked down.
-
-**Real:**
-- Telegram group messages, read live. Native Telegram polls with real vote counts.
-- Constraint extraction by Gemini over actual chat history, with the quote each constraint came from.
-- Restaurant data from OpenStreetMap via Overpass — real names, real phone numbers.
-- The phone call. A real number rings, a real human answers, the agent holds the conversation, and the transcript goes back into the chat.
-
-**Honest limitations:**
-- **OpenStreetMap phone coverage is about one place in five.** Measured on the cache this repo builds: 602 named restaurants across HK Island north shore, Kowloon and the New Territories spine, 125 of them with a phone number that normalises to a dialable +852 — 21%. Phone-bearing rows are therefore sorted first everywhere — a recommendation you cannot dial is worthless to this agent.
-- **The default ElevenLabs path needs a human to dial.** The optional Vapi path dials only after a human approves the exact displayed call, and currently checks availability without booking.
-- **The agent speaks English and understands Cantonese.** ElevenLabs Scribe does Cantonese speech-to-text at 5.9% WER (vs Whisper large-v3 at 13.2%), but ElevenLabs TTS has no Cantonese voice at all — the model list has Mandarin and no Yue. So: English out, Cantonese in. That is how a large share of Hong Kong service calls already run.
-- **Exa is an enhancement, never a dependency.** Every failure path returns `[]`. It finds names; OpenStreetMap makes them callable.
-- **The operator console is a second front end, not the primary one.** It builds and type-checks clean, and its approval step *is* the suspended tool call — `place_call` has a `render` and no handler, so the model cannot dial on its own. But the Telegram flow is the one that has been driven end to end against real restaurants; the console has not.
-
-**Not used, deliberately:** OpenRice. Its `robots.txt` names `GPTBot`, `PerplexityBot`, `meta-externalagent` and `Bytespider` and disallows the JSON service endpoints, and its terms forbid using *"any robot, any automatic device or manual process to monitor or copy the Channels."* A hackathon submission is a public repo and a live stage demo. Don't.
-
-## Safety rails
-
-Not optional polish. These are the difference between a good demo and an irresponsible one.
-
-1. **The agent discloses it is an AI in its first sentence.** Not on request, not buried. It's in the agent's fixed prompt, and this repo only ever passes *dynamic variables* — the booking facts — so the disclosure cannot be edited out from the calling code.
-2. **A human approves the exact call.** In ElevenLabs mode a human also dials. In Vapi mode approval initiates one outbound call; a duplicate `/dial` cannot start another.
-3. **`CONSENTED_NUMBERS` is an allowlist enforced in code.** A booking for a number nobody agreed to is refused at the approval gate, with an explanation posted to the chat. See `resolve_dial_target()` in `bot.py`.
-4. **`DEMO_PHONE` routes every call to a number you control**, whichever restaurant won the poll. The approval card and the call page both say so out loud.
-5. **No invented phone numbers, anywhere.** The model is explicitly forbidden from emitting one, and `_rehydrate()` in `pipeline.py` structurally drops any phone field the model returns — the digits that get dialled come only from OpenStreetMap. The offline seed list in `places.py` carries names with `phone: None` rather than numbers typed from memory.
-6. **If it books a real table, turn up or cancel it.**
-
-**Every switch, and what it does**
-
-| Variable | Default | Effect |
-|---|---|---|
-| `CONSENTED_NUMBERS` | empty | Comma-separated allowlist. A booking for anything not on it is refused at the approval gate. |
-| `DEMO_PHONE` | empty | Routes *every* call to this number whatever won the poll. Both the approval card and the call page say so out loud, and a calendar entry made under it is labelled a rehearsal. |
-| `ALLOW_ANY_NUMBER` | `0` | Disables the allowlist. Leave it alone. It exists so that turning the rail off is a deliberate, greppable act rather than a code edit. |
-| `NO_AUTO_OPEN` | unset | Stops the bridge opening the call desk in your browser on start. Set it and you must open `http://localhost:8080/` yourself — if you forget, an approved call rings a phone with no agent on the line. |
-| `CONSOLE_ORIGIN` | `http://localhost:3000` | The single origin allowed through CORS. Not a wildcard. |
-| `ELEVENLABS_API_KEY` | empty | Optional. Lets the bridge read the agent's own post-call analysis; without it the outcome is derived from the transcript instead, and the chat message says which. |
-| `CALL_PROVIDER` | `elevenlabs` | Set to `vapi` for automated outbound inquiry after an imported Twilio number and Vapi assistant are configured. |
-| `VAPI_PHONE_NUMBER_ID` | empty | Vapi ID of the imported, active Twilio number. A free Vapi-managed number cannot dial outbound. |
-
-There is no local auto-dial in ElevenLabs mode: it put the call audio on the same machine as the agent, where echo cancellation deleted the signal both ways. Vapi's cloud voice path avoids that acoustic problem but currently stops at an inquiry because it has no public policy-check tool.
-
-## Setup
-
-### Private requirements and delegated negotiation
-
-This feature is implemented for the **Telegram dinner flow**. It reduces the
-organiser's work when a guest has a limit they do not want to announce to the
-group and the restaurant offers different terms on the call.
-
-1. In the group, send `/private`. Each participant opens the DM link. The bot
-   verifies Telegram group membership (it may need administrator rights to
-   inspect members). A participant sends `budget 150`, `time 19:00-20:00`, or
-   taps Vegetarian, Vegan, No pork, or Step-free, then **Save privately**.
-   The draft alone changes nothing. The DM explains who can receive combined
-   requirements and that an outcome may indirectly reveal a private limit.
-2. The group sends `/negotiate 19:00-20:00 budget 200`. These are **proposed**
-   same-day start times and an all-in HKD per-person maximum. Deposits are
-   never authorised. Private inputs silently narrow the delegation.
-3. Run `/decide`, vote, then `/close`. The approval card shows the public
-   delegation and states that private requirements also apply. A human
-   approves the call and dials on their phone as before.
-4. The ElevenLabs agent asks staff for a time, any deposit and relevant
-   requirements, without asking for a per-person meal price. Its
-   `evaluate_offer` client tool checks each offer in code. If staff does not
-   volunteer a price, a budget-limited offer cannot be verified or booked.
-   The call desk displays each check. An offer outside the limits prompts one
-   counteroffer; missing facts prompt clarification. The tool's "accept" only
-   permits asking staff to hold those exact terms. Final reported terms must
-   match the checked offer before the group sees a confirmed booking.
-5. The group receives the complete transcript after every call, whether or not
-   a table was booked. A matching Vapi hold also gets a tentative one-tap
-   calendar link; mismatched or unverified offers do not. Private identities and
-   limits stay out of the approval card; staff notes remain out of the structured result. The operator
-   and voice provider still see the combined requirements and local call log.
-
-`/private new` starts another outing and deletes the prior event's saved
-inputs. A participant can use **Forget my inputs** in the DM; saved inputs
-expire after 24 hours. A changed private input invalidates the old call
-approval. The call desk handles one approved call at a time.
-
-To provision the voice agent's prompt, eleven outcome fields and client tool:
+## Run it locally
 
 ```bash
-python3 setup_agent.py --dry-run
-python3 setup_agent.py             # requires ELEVENLABS_API_KEY in .env
-python3 preflight.py
+git clone https://github.com/AikagraGupta/convene-gl-hacks.git
+cd convene-gl-hacks
+cp .env.example .env
 ```
 
-There is no `.env` in this repository and no live Telegram or ElevenLabs
-session was run as part of this feature's automated checks. The voice tool
-must be provisioned on the account and tried on a consenting role-play before
-presenting a live negotiated booking. The structured private fields affect
-call approval and venue verification; the discovery shortlist currently does
-not use them, because OSM listings do not reliably establish price, dietary
-accommodation or access. Do not describe a proposed listing as verified.
-
-The tool checks what the agent extracted from staff speech; it cannot prove
-transcription accuracy or physically prevent a voice model from speaking in
-error. The final outcome gate refuses to announce a mismatched confirmation,
-and the human operator can end the call.
+Fill in the credentials in `.env`, then start the bridge and bot in two
+terminals:
 
 ```bash
-git clone https://github.com/AikagraGupta/convene-gl-hacks.git && cd convene-gl-hacks
-cp .env.example .env      # then fill it in
-```
-
-Stdlib only. Nothing to install.
-
-**BotFather, and don't skip the second step:**
-1. `/newbot` → copy the token into `TELEGRAM_TOKEN`
-2. **`/setprivacy` → Disable.** Without this the bot cannot see group messages at all and nothing works.
-
-**ElevenLabs:** create an agent, set **authentication OFF** (otherwise connecting by plain `agentId` fails and you need signed URLs), then use `setup_agent.py` to provision the prompt, client tool, and outcome schema from `docs/elevenlabs-agent.md`.
-
-**Vapi outbound option:** import a Twilio number into Vapi, set `VAPI_API_KEY`, `VAPI_ASSISTANT_ID`, and `VAPI_PHONE_NUMBER_ID`, then run `python setup_vapi.py --apply`. This backs up and configures the assistant for disclosed, inquiry-only calls. Set `CALL_PROVIDER=vapi` and restart the bot and bridge. Run `python preflight.py` before approving a call. The call destination still comes from `DEMO_PHONE` or the consent allowlist; the Twilio number is the caller ID. An active imported number does not prove that Twilio can reach the Hong Kong destination until a consented test call succeeds.
-
-**Build the offline safety net while you have working wifi:**
-```bash
-python3 places.py --refresh-cache
-```
-
-**If you are on macOS with Python from python.org, run this once:**
-```bash
-# Use YOUR version, not this one — the folder is named after it:
-open "/Applications/Python $(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')/Install Certificates.command"
-```
-That installer does not wire Python into the system keychain — it expects a `cert.pem` it never creates. The symptom is vicious: `curl https://...` works perfectly while *every* `urllib` call in the same shell dies with `CERTIFICATE_VERIFY_FAILED`. Since every network call here goes through `urllib`, nothing works at all, and the error points at certificates rather than the one-line fix. Both `bot.py` and `bridge/server.py` now check the trust store at startup and print the exact command if it's empty.
-
-**Provision the ElevenLabs agent from the docs, rather than by hand:**
-```bash
-python3 setup_agent.py --dry-run   # show what it parsed
-python3 setup_agent.py             # create or update the agent, then verify it
-```
-`docs/elevenlabs-agent.md` is the single source of truth: this script parses the first message, the system prompt and the six-field data-collection schema straight out of it and provisions the agent over the API. The prompt a human reads and the prompt the agent runs cannot drift, because they are the same bytes.
-
-It **refuses to provision** a prompt that uses a `{{variable}}` the call page never sends, or a first message that doesn't disclose being an AI — both of those fail silently otherwise, and a silently wrong agent makes a fluent, confident call that mentions no dietary constraint and no time. Afterwards it reads the agent back from the server and checks six things stuck, because trusting a `200` is how you end up with an agent missing the thing you just set.
-
-**Check everything before it matters:**
-```bash
-python3 preflight.py
-```
-Every dependency, checked live, each failure printing the exact fix. It exists because this project's failure modes all masquerade as something else: an empty TLS store looks like a network outage, a retired model looks like a bad prompt, and a bot with privacy mode still on looks like a bot that is ignoring you.
-
-**See the brain work without a Telegram bot or a phone call:**
-```bash
-python3 dryrun.py            # or: python3 dryrun.py my_chat.txt
-```
-This is exactly what `/decide` does — read a conversation, name the constraints with the quotes they came from, search, pick three — minus the chat and the call. Roughly 8 seconds end to end.
-
-**Run, in two terminals:**
-```bash
-python3 bridge/server.py      # then open http://localhost:8080/
+python3 bridge/server.py
 python3 bot.py
 ```
 
-`http://localhost:8080/`, not the file. Browsers refuse `getUserMedia` on `file://`, and that is the number one cause of "it just hangs".
-
-## Using it
-
-Add the bot to a group chat, argue normally, then:
-
-- `/decide` — reads the history, posts the constraints it found *with the quotes they came from*, proposes three places, opens a poll
-- `/close` — closes the poll, names the winner, asks a human to approve the call
-- `/status` — what it has read and which safety rail is active
-- `/who` — every preference it remembers, per person, with the quote each one came from
-- `/forget NAME` — drop one person; `/forget all` wipes the lot
-
-Memory is inspectable and correctable on purpose. Nothing is remembered without both a named speaker and the words they used, and `/who` shows you the words.
-
-On the call page: **Arm microphone** → confirm the level bar moves → dial → speakerphone → **Start agent**.
-
-The level bar is the only diagnostic that matters. If it doesn't move when the restaurant's voice comes out of the phone speaker, acoustic coupling has failed and no prompt tuning will fix it.
-
-## The operator console
+Open <http://localhost:8080/> for the operator call desk. To rehearse the full
+decision flow without a Telegram group, run:
 
 ```bash
-cd console && npm install && npm run dev      # http://localhost:3000
+python3 demo.py
 ```
 
-A Next.js console built on **CopilotKit v2**, for the moment before the call goes out.
+For a clean dependency and configuration check:
 
-It exists because of one hook. This project's entire risk surface is a single instant: an AI is about to dial a real number and speak to a real person. That is precisely what `useHumanInTheLoop` models — the agent can *propose* the call, and the call cannot proceed until a human reads a rendered card and presses a button. The approval isn't a `confirm()` bolted onto a chat; it **is** the tool call, suspended mid-execution until a person resolves it.
+```bash
+python3 preflight.py
+```
 
-`place_call` has **no handler**. The human-in-the-loop type omits it, so there is no code path by which the model completes the call itself — it can only suspend and wait for `respond()`. The safety property is enforced by the type rather than by a prompt asking the model to be careful, and the test suite asserts that handler stays absent.
+The project uses the Python standard library for its local services. The
+operator console is available under `console/`:
 
-Around it: `useAgentContext` pushes the live booking and bridge health so the copilot already has the booking in front of it; `useFrontendTool` gives it `read_booking`, `amend_booking` and `cancel_booking`.
+```bash
+cd console
+npm install
+npm run dev
+```
 
-`POST /amend` on the bridge is deliberately narrow — `party_size`, `when_text`, `booking_name`, `notes` and nothing else. `dial_number`, `real_number`, `restaurant_name` and `demo_override` are **not amendable by anything, ever**. The number dialled is settled by the poll, by OpenStreetMap and by the consent allowlist, and an endpoint that could overwrite it would route around all three. This console hands that endpoint to an LLM, which makes the restriction load-bearing rather than tidy.
+## Configure the voice agent
 
-**On the v2 API**, verified by unpacking the published package rather than trusting tutorials. Every tutorial online still shows v1's `<CopilotKit>` with `useCopilotAction`, which is deprecated — mix them and you get a chat that connects and then never calls your tools. 1.71.1 actually exports `CopilotKitProvider`, `useFrontendTool`, `useHumanInTheLoop`, `useAgent` and `useAgentContext` from `@copilotkit/react-core/v2`, and `BuiltInAgent` + `createCopilotEndpoint` from `@copilotkit/runtime/v2`. `createCopilotEndpoint` returns a Hono app whose `.fetch(request)` is already the shape a Next App Router handler wants, so the runtime is four lines and no adapter. The agent runs on Gemini through a constructed `LanguageModel`, so the only credential involved is the key this project already has — **no OpenAI key needed**.
+Create an ElevenLabs agent, then provision its prompt, data collection fields,
+and outcome schema from the checked-in specification:
 
-Four things that only showed up by running it, none of which raised an error:
+```bash
+python3 setup_agent.py --dry-run
+python3 setup_agent.py
+```
 
-| Symptom | Cause |
+The optional Vapi path can be enabled with an imported Twilio number:
+
+```bash
+python3 setup_vapi.py --apply
+```
+
+Set `CALL_PROVIDER=vapi` in `.env` to use that provider. Convene keeps the
+approved booking details consistent across Telegram, the call desk, the voice
+agent, and the final calendar event.
+
+## Stack
+
+| Layer | Technology |
 |---|---|
-| Agent had no system prompt | `BuiltInAgent` takes `prompt`, not `instructions`. TypeScript caught it; a JS project would have shipped a silently instruction-less agent. |
-| `npm install` skipped TypeScript | `NODE_ENV=production` in the shell makes npm omit dev dependencies. |
-| `ERR_BLOCKED_BY_CLIENT` on every bridge call | Direct `:8080` fetches are cross-origin. CORS headers aren't enough for a strict sub-resource policy, so the console now proxies the bridge through its own origin. |
-| Chat rendered one word per line | `CopilotChat` wraps itself in a `display: contents` div, so `.chatwrap > *` styled the wrapper and `.copilotKitChat` computed to **width 0**. |
+| Group chat | Telegram Bot API and native polls |
+| Reasoning | Gemini with OpenRouter fallback |
+| Place discovery | Overpass / OpenStreetMap and Exa |
+| Voice | ElevenLabs Agents over WebRTC; Vapi + Twilio option |
+| Operator UI | Local bridge and Next.js console |
+| Calendar | One-tap event links generated from the confirmed plan |
 
 ## Tests
 
@@ -324,31 +189,10 @@ Four things that only showed up by running it, none of which raised an error:
 python3 tests/run.py
 ```
 
-The network is mocked entirely — no Telegram, no Gemini, no Overpass, no Exa — and the *real* code is driven against it. The runner exits non-zero on failure, crash **or skip**: a suite silently not running while the report says "0 failed" is worse than a red.
+The test suite covers the conversation pipeline, place discovery, private
+requirements, negotiation, Telegram commands, voice outcomes, calendar links,
+and the operator console contracts.
 
-## Measured latency of one `/decide`
-
-| Stage | Time |
-|---|---|
-| Constraint extraction (Gemini) | 2.6s |
-| Candidate search (fresh cache) | 0.01s |
-| Exa discovery | 1.8s |
-| Choosing three (Gemini) | 3.8s |
-| **Total** | **~8s** |
-
-It was 79 seconds before two fixes: Gemini was spending its whole token budget on thinking and returning truncated JSON, and a live Overpass round trip was costing up to 18 seconds on every call. Both are described in the commit history. A `/decide` that six impatient people watch for 79 seconds is a different product from one that answers in eight.
-
-## Stack
-
-| Layer | Choice | Why |
-|---|---|---|
-| Chat | Telegram Bot API | Free, instant token, native polls with real vote counts |
-| Brain | Gemini (AI Studio) | Free tier, no card. Chain, never a pin — availability moved twice in 24h |
-| Fallback | OpenRouter | Different vendor, different outage |
-| Discovery | Exa | Semantic search in the group's own words |
-| Phone numbers | Overpass / OpenStreetMap | No key, real HK data, a licence that permits this |
-| Voice | ElevenLabs Agents (default); Vapi + Twilio (optional) | Manual speakerphone booking flow or approved outbound inquiry |
-
-## Licence
+## License
 
 MIT.
