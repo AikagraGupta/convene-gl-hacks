@@ -337,6 +337,9 @@ Rules:
 - A dish rejected two or more separate times is a veto, even if nobody used the word.
 - An explicit "no X" or "not X" is also a veto after one rejection. Do not drop it
   because someone wanted X earlier.
+- A rejected restaurant, chain, cuisine or dish is a venue-selection veto, NOT
+  a requirement to ask the eventual restaurant to accommodate. "No McDonald's"
+  should exclude McDonald's from the picks, not become a dietary restriction.
 - Read the sequence: when someone accepts a later food suggestion, distinguish that
   from their earlier preference. Quote the later agreement; do not present an old
   idea as the current group choice.
@@ -741,6 +744,11 @@ def _supplement_explicit_facts(model: dict, chat_text: str) -> dict:
             seen_vetoes.add(key)
         if key not in {_norm(v) for v in model["avoid_cuisines"]}:
             model["avoid_cuisines"].append(item["thing"])
+    # The model sometimes files a chain veto under both "hard" and "vetoed".
+    # Keep the veto for choosing a venue, but never ask another restaurant to
+    # verify that it is not the rejected chain.
+    model["hard"] = [item for item in model["hard"]
+                     if not _is_venue_veto(item.get("constraint", ""), model)]
     seen_people = {_norm(v.get("who", "")) for v in model["coming_from"] if v.get("who")}
     for item in literal["coming_from"]:
         if _norm(item["who"]) not in seen_people:
@@ -770,6 +778,28 @@ def _supplement_explicit_facts(model: dict, chat_text: str) -> dict:
         model["open_questions"] = [question for question in model["open_questions"]
                                    if not re.search(r"\b(?:middle|midpoint|meeting point)\b", question, re.I)]
     return model
+
+
+def _is_venue_veto(text: str, constraints: dict) -> bool:
+    label = _norm(text)
+    for item in constraints.get("vetoed") or []:
+        thing = _norm(item.get("thing", ""))
+        if thing and label in {
+            thing, "no" + thing, "not" + thing, "avoid" + thing,
+            "avoids" + thing, "nomore" + thing, "dontwant" + thing,
+            "doesnotwant" + thing, "no" + thing + "food",
+            "no" + thing + "items", "no" + thing + "restaurant",
+        }:
+            return True
+    return False
+
+
+def venue_requirements(constraints: dict) -> list[str]:
+    """Only requirements staff can actually verify, including for old state."""
+    return list(dict.fromkeys(
+        item["constraint"] for item in constraints.get("hard") or []
+        if item.get("constraint") and not _is_venue_veto(item["constraint"], constraints)
+    ))
 
 
 # ---------------------------------------------------------------------------

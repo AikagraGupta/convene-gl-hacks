@@ -547,7 +547,7 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
         return
 
     state.awaiting = None
-    hard_list = [h["constraint"] for h in state.constraints.get("hard", []) if h.get("constraint")]
+    hard_list = pipeline.venue_requirements(state.constraints)
     try:
         private = private_inputs.snapshot(state.private_plan)
         policy = negotiation.build(when_text, party, state.negotiation_limits, private, hard_list)

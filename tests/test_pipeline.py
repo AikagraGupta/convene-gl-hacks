@@ -147,6 +147,18 @@ Jenny: i am in Sheung Shui"""
     s.eq("later agreed food supersedes the initial suggestion", read["prefer_cuisines"], ["salad"])
     s.eq("agreed food appears in the rendered summary", read["soft"][0]["constraint"], "salad")
     s.eq("explicit chain rejection becomes a veto", read["vetoed"][0]["thing"], "mcdonalds")
+    misfiled = pipeline._empty_constraints("model put the chain veto in both buckets")
+    misfiled["hard"] = [
+        {"constraint": "No McDonald's", "who": "Jenny", "quote": "no mcdonald"},
+        {"constraint": "No pork", "who": "Jenny", "quote": "no pork"},
+    ]
+    corrected = pipeline._supplement_explicit_facts(misfiled, rehearsal)
+    s.eq("venue veto stays out of dietary requirements",
+         pipeline.venue_requirements(corrected), ["No pork"])
+    s.eq("venue veto still filters venue choices",
+         corrected["vetoed"][0]["thing"], "mcdonalds")
+    s.eq("old saved state is filtered before a call too",
+         pipeline.venue_requirements({**misfiled, "vetoed": corrected["vetoed"]}), ["No pork"])
     s.eq("third commuter is attributed correctly", read["coming_from"][-1],
          {"who": "Jenny", "place": "Sheung Shui"})
     s.eq("known headcount and time need no follow-up", read["open_questions"], [])

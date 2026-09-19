@@ -24,6 +24,7 @@ the calls that matter.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -361,6 +362,67 @@ def check_offer(pending: dict, offer: dict) -> dict:
     return negotiation.evaluate(pending["negotiation"], offer)
 
 
+def ground_offer(pending: dict, offer: dict) -> dict:
+    """Require the venue, not the agent, to have actually stated money terms.
+
+    The voice model can copy the approved ceiling into its tool arguments as
+    though staff quoted it. Missing evidence becomes an unknown field, so the
+    evaluator asks for clarification instead of approving an invented offer.
+    """
+    venue_turns = [
+        str(turn.get("message") or "") for turn in pending.get("live_turns") or []
+        if turn.get("source") == "user"
+    ]
+    grounded = dict(offer)
+    price = offer.get("price_per_person")
+    try:
+        price = negotiation.money(price)
+    except ValueError:
+        price = None
+    price_phrases = []
+    price_quote = ""
+    for turn in venue_turns:
+        found = re.findall(
+            r"(?:\b(?:price|cost|charge|all[- ]in)\b.{0,24}?|\b)(?:HK\$|HKD\s*)?"
+            r"(\d{1,5}(?:\.\d{1,2})?)\s*(?:per\s+(?:person|head|pax)|each)\b"
+            r"|\b(?:price|cost|charge|all[- ]in)\b.{0,24}?(?:HK\$|HKD\s*)?"
+            r"(\d{1,5}(?:\.\d{1,2})?)\b",
+            turn, flags=re.I,
+        )
+        if found:
+            price_phrases, price_quote = found, turn
+    stated_prices = {float(a or b) for a, b in price_phrases}
+    if price is None or price not in stated_prices:
+        grounded.pop("price_per_person", None)
+    if not re.search(r"\bHKD\b|HK\$|Hong Kong dollars?", price_quote, re.I):
+        grounded.pop("currency", None)
+
+    deposit = offer.get("deposit_total")
+    try:
+        deposit = negotiation.money(deposit)
+    except ValueError:
+        deposit = None
+    deposit_quote = next((turn for turn in reversed(venue_turns)
+                          if re.search(r"\bdeposit\b", turn, re.I)), "")
+    if deposit == 0:
+        no_deposit = re.search(
+            r"\b(?:no|zero)\s+deposit\b|\bdeposit\s+(?:is\s+)?(?:zero|none|not required|not needed|HK\$?0|0)\b"
+            r"|\b(?:don't|do not)\s+(?:need|require)\s+(?:a\s+)?deposit\b",
+            deposit_quote, re.I,
+        )
+        if not no_deposit:
+            grounded.pop("deposit_total", None)
+    elif deposit is not None:
+        stated_deposits = re.findall(
+            r"\bdeposit\b.{0,18}?(?:HK\$|HKD\s*)?(\d{1,5}(?:\.\d{1,2})?)\b"
+            r"|\b(\d{1,5}(?:\.\d{1,2})?)\s*(?:HKD\s*)?deposit\b",
+            deposit_quote, flags=re.I,
+        )
+        if deposit not in {float(a or b) for a, b in stated_deposits}:
+            grounded.pop("deposit_total", None)
+    return grounded
+
+
 def validate_outcome(pending: dict, collected: dict) -> dict:
     """Never label an unchecked voice-model claim as an authorised booking."""
     if not pending.get("negotiation") or collected.get("status") not in ("confirmed", "booked"):
@@ -373,7 +435,8 @@ def validate_outcome(pending: dict, collected: dict) -> dict:
     final_offer = {key: collected.get(key) for key in
                    ("price_per_person", "deposit_total", "currency", "same_day", "requirements_met")}
     final_offer.update(time=time_text, party_size=collected.get("confirmed_party_size"))
-    valid = (latest.get("result", {}).get("action") == "accept"
+    valid = (latest.get("evidence_checked") is True
+             and latest.get("result", {}).get("action") == "accept"
              and private_inputs.current(pending)
              and negotiation.evaluate(pending["negotiation"], final_offer)["action"] == "accept"
              and all(final_offer[key] == offer.get(key) for key in final_offer))
@@ -498,9 +561,11 @@ class Handler(BaseHTTPRequestHandler):
             if not pending.get("negotiation") or not isinstance(body.get("offer"), dict):
                 self._json({"error": "approved negotiation and offer required"}, 400)
                 return
-            result = check_offer(pending, body["offer"])
+            grounded = ground_offer(pending, body["offer"])
+            result = check_offer(pending, grounded)
             events = pending.get("negotiation_events") or []
-            events.append({"offer": body["offer"], "result": result,
+            events.append({"offer": grounded, "result": result,
+                           "evidence_checked": True,
                            "at": datetime.now(timezone.utc).isoformat()})
             patch_pending(negotiation_events=events[-30:])
             self._json(result)

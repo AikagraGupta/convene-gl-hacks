@@ -166,21 +166,29 @@
     .mlabel { min-width: 0; font-size: 11px; }
     .thread { padding: 18px 15px; }
   }
-  .delegation { background: #173f35; color: #f4faf5; border-radius: 18px; padding: 18px 22px; flex: none; }
+  .delegation {
+    flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px;
+    background: var(--card); border: 1px solid var(--hair); border-radius: 14px;
+    padding: 10px 16px; color: var(--ink-2); font-size: 13px;
+  }
   .delegation[hidden] { display: none; }
-  .delegation h2 { margin: 0 0 5px; font-size: 18px; letter-spacing: -.4px; }
-  .delegation p { margin: 5px 0; color: #d3e8df; font-size: 13px; }
-  .limits { display: flex; gap: 24px; flex-wrap: wrap; margin: 14px 0; }
-  .limits span { display: block; color: #b9d6c8; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
-  .limits strong { font-size: 23px; font-weight: 550; font-variant-numeric: tabular-nums; }
-  .checks { display: flex; flex-wrap: wrap; gap: 7px; padding: 0; list-style: none; margin: 12px 0 0; }
-  .checks li { border: 1px solid #799689; border-radius: 7px; padding: 5px 9px; font-size: 12px; }
-  .checks .pass { color: #d5ffdf; border-color: #89b998; }
-  .checks .fail { color: #ffe4b7; border-color: #e6ac5c; }
-  .decision { font-size: 17px; font-weight: 650; margin-top: 13px; }
-  .event-history { margin: 8px 0 0; padding-left: 20px; color: #d3e8df; font-size: 12px; max-height: 70px; overflow: auto; }
+  .delegation .label { color: var(--ink); font-weight: 620; }
+  .delegation .terms { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .delegation .privacy { color: var(--ink-3); }
+  .delegation .privacy:empty, .delegation .requirements:empty { display: none; }
+  .delegation .requirements::before { content: "· "; }
+  .offer-status { margin-left: auto; color: var(--ink-2); }
+  .offer-status[hidden], .offer-details[hidden] { display: none; }
+  .offer-status .decision { font-weight: 600; }
+  .offer-details { width: 100%; color: var(--ink-2); font-size: 12px; }
+  .offer-details summary { cursor: pointer; width: fit-content; }
+  .checks { display: flex; flex-wrap: wrap; gap: 7px; padding: 0; list-style: none; margin: 10px 0 0; }
+  .checks li { border: 1px solid var(--hair); border-radius: 7px; padding: 5px 9px; }
+  .checks .pass { color: #248a3d; }
+  .checks .fail { color: #a35d00; }
+  .event-history { margin: 8px 0 0; padding-left: 20px; max-height: 70px; overflow: auto; }
   button:focus-visible { outline: 3px solid #007aff; outline-offset: 3px; }
-  @media (max-width: 580px) { .wrap { height: auto; min-height: 100vh; } .thread { min-height: 240px; max-height: 50vh; } .limits { gap: 15px; } }
+  @media (max-width: 580px) { .wrap { height: auto; min-height: 100vh; } .thread { min-height: 240px; max-height: 50vh; } .offer-status { margin-left: 0; } }
 </style>
 </head>
 <body>
@@ -198,20 +206,19 @@
     <div class="f"><span class="k">Under</span><span class="v" id="bBooker">—</span></div>
   </div>
 
-  <section class="delegation" id="delegation" hidden aria-labelledby="delegationTitle">
-    <h2 id="delegationTitle">A little flexibility. Clear boundaries.</h2>
-    <p id="privacyNotice"></p>
-    <div class="limits">
-      <div><span>Acceptable start</span><strong id="nTime">—</strong></div>
-      <div><span>All-in / person</span><strong id="nBudget">—</strong></div>
-      <div><span>Deposit authority</span><strong>HK$0</strong></div>
-    </div>
-    <p id="nRequirements"></p>
-    <div id="offerStatus" role="status" aria-live="polite">
-      <div class="decision" id="nDecision">Waiting for the venue's offer</div>
+  <section class="delegation" id="delegation" hidden aria-label="Approved call limits">
+    <span class="label">Approved</span>
+    <span class="terms" id="nLimits">—</span>
+    <span class="requirements" id="nRequirements"></span>
+    <span class="privacy" id="privacyNotice"></span>
+    <span class="offer-status" id="offerStatus" role="status" aria-live="polite" hidden>
+      <span class="decision" id="nDecision"></span>
+    </span>
+    <details class="offer-details" id="offerDetails" hidden>
+      <summary>Offer checks</summary>
       <ul class="checks" id="nChecks"></ul>
-    </div>
-    <ol class="event-history" id="nHistory" aria-label="Offer history"></ol>
+      <ol class="event-history" id="nHistory" aria-label="Offer history"></ol>
+    </details>
   </section>
 
   <div class="thread" id="thread">
@@ -592,23 +599,25 @@ function renderPending(p) {
 
 let lastOfferRender = "";
 function renderNegotiation(p) {
-  const policy = p.negotiation;
+  const policy = p.status === "done" ? null : p.negotiation;
   $("delegation").hidden = !policy;
   if (!policy) return;
   const time = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-  $("nTime").textContent = `${time(policy.start)}–${time(policy.end)}`;
-  $("nBudget").textContent = policy.budget == null ? "Ask the group" : `HK$${policy.budget}`;
+  $("nLimits").textContent = `${time(policy.start)}–${time(policy.end)} · ${policy.budget == null ? "budget not set" : `up to HK$${policy.budget}/person`} · no deposit`;
   $("privacyNotice").textContent = p.private_mode
-    ? "Private requirements applied · operator view only · group transcript hidden"
-    : "These limits were presented with the group approval. An offer check does not itself confirm a booking.";
-  $("nRequirements").textContent = policy.requirements.length ? `Verify with staff: ${policy.requirements.join(" · ")}` : "No additional requirements recorded.";
+    ? "Private needs included" : "";
+  $("nRequirements").textContent = policy.requirements.length ? `Ask: ${policy.requirements.join(" · ")}` : "";
   const events = p.negotiation_events || [];
   const signature = JSON.stringify([p.id, events]);
   if (signature === lastOfferRender) return;
   lastOfferRender = signature;
   const latest = events.at(-1);
+  const verified = latest?.evidence_checked === true;
   const titles = { accept: "Within limits · ask staff to confirm", counter: "Outside limits · negotiate an alternative", clarify: "Missing facts · ask before committing", stop: "Approval changed · stop and review" };
-  $("nDecision").textContent = latest ? titles[latest.result.action] : "Waiting for the venue's offer";
+  $("offerStatus").hidden = !latest;
+  $("offerDetails").hidden = !verified;
+  $("nDecision").textContent = !latest ? "" : verified
+    ? titles[latest.result.action] : "Unverified offer · ask before committing";
   $("nChecks").replaceChildren();
   for (const check of latest?.result.checks || []) {
     const item = document.createElement("li");

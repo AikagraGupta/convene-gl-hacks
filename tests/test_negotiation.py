@@ -58,16 +58,33 @@ def run():
             token = private_inputs.create(-100, "Dinner")
             pending = {"id": "call-a", "status": "dialing", "private_plan": token, "private_revision": 0,
                        "private_mode": True, "negotiation": policy, "negotiation_events": [],
-                       "restaurant_name": "Example", "when_text": "Friday 7pm", "party_size": 6}
+                       "restaurant_name": "Example", "when_text": "Friday 7pm", "party_size": 6,
+                       "live_turns": [
+                           {"source": "ai", "message": "The limit is HK$150 per person with no deposit."},
+                           {"source": "user", "message": "Okay."},
+                       ]}
             server.write_pending(pending)
             code, result = dispatch("/negotiate", {"booking_id": "wrong", "offer": offer})
             s.eq("stale call ID rejected at endpoint", code, 409)
             s.eq("stale request does not append an event", server.read_pending()["negotiation_events"], [])
             code, result = dispatch("/negotiate", {"booking_id": "call-a", "offer": offer})
+            s.eq("agent repeating the approved ceiling is not venue evidence", result["action"], "clarify")
+            s.eq("unsupported price is removed", server.read_pending()["negotiation_events"][-1]["offer"].get("price_per_person"), None)
+            pending["live_turns"].append({"source": "user", "message": "Yes, HK$150 per person, no deposit, for six at 7:45 and a vegetarian meal is available."})
+            pending["negotiation_events"] = []
+            server.write_pending(pending)
+            code, result = dispatch("/negotiate", {"booking_id": "call-a", "offer": offer})
             s.eq("live tool request succeeds", code, 200)
             s.eq("endpoint returns actual evaluator result", result["action"], "accept")
             pending = server.read_pending()
             s.eq("the live UI gets a persisted offer event", len(pending["negotiation_events"]), 1)
+            changed = {**pending, "live_turns": pending["live_turns"] + [
+                {"source": "user", "message": "Actually, HK$180 per person and a HK$20 deposit."}
+            ]}
+            s.eq("earlier price cannot justify a changed offer",
+                 server.ground_offer(changed, offer).get("price_per_person"), None)
+            s.eq("earlier no-deposit claim cannot survive a later deposit",
+                 server.ground_offer(changed, offer).get("deposit_total"), None)
             collected = {"status": "confirmed", "confirmed_time": "7:45pm", "confirmed_party_size": 6,
                          **{k: v for k, v in offer.items() if k not in ("time", "party_size")}}
             s.eq("checked matching final terms may confirm", server.validate_outcome(pending, collected)["status"], "confirmed")
