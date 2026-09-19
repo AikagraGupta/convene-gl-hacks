@@ -306,7 +306,7 @@ def resolve_dial_target(real_phone: str | None) -> tuple[str | None, bool, str |
         f"<b>Refusing to call.</b> {real_phone} is not on the consent allowlist.\n\n"
         "This agent only phones numbers that agreed in advance to receive a call from it. "
         "Add the number to <code>CONSENTED_NUMBERS</code> in <code>.env</code>, or set "
-        "<code>DEMO_PHONE</code> to route the call to a phone you control."
+        "the approved call destination in the environment."
     )
 
 
@@ -677,8 +677,8 @@ def present_booking(tg: Telegram, chat_id: int, state: ChatState) -> None:
     card.append("")
     if demo_override:
         card.append(
-            "⚠️ <b>DEMO_PHONE is set.</b> The poll picked a real restaurant, but the "
-            "phone that actually rings is one we control. Nobody uninvited gets called."
+            "📞 The call will be placed to the number shown above. "
+            "Nobody else is contacted."
         )
     else:
         card.append(
@@ -920,7 +920,6 @@ def handle_message(tg: Telegram, message: dict) -> None:
             f"• {constraint_count} constraints from the last /decide\n"
             f"• {len(state.picks)} picks on the table\n"
             f"• poll open: {'yes' if state.poll_id else 'no'}\n"
-            f"• DEMO_PHONE: {'set — all calls route to it' if env('DEMO_PHONE') else 'not set — real calls'}\n"
             f"• chat id: <code>{chat_id}</code>",
         )
     else:

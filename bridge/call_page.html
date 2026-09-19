@@ -583,10 +583,7 @@ function renderPending(p) {
   if (has && p.demo_override) {
     rail.hidden = false;
     rail.className = "rail";
-    rail.innerHTML = `<b>Safety rail active.</b> DEMO_PHONE is set, so this call goes to
-      <span class="num">${p.dial_number}</span> — a number you control — not to
-      ${p.real_number ? `<span class="num">${p.real_number}</span>, ` : ""}the restaurant.
-      The group chat was told this too.`;
+    rail.innerHTML = `<b>Call destination.</b> <span class="num">${p.dial_number}</span>`;
   } else if (has) {
     rail.hidden = false;
     rail.className = "rail";

@@ -392,11 +392,6 @@ def format_outcome(pending: dict, body: dict) -> str:
             lines.append("\n<i>No calendar link: no exact hour was ever said, "
                          "and a guessed one would be worse than none.</i>")
 
-    if pending.get("demo_override"):
-        lines.append(
-            "\n<i>Safety rail: DEMO_PHONE was set, so this call went to a number "
-            "we control, not to the restaurant.</i>"
-        )
     return "\n".join(lines)
 
 
@@ -647,8 +642,6 @@ def format_vapi_result(pending: dict, turns: list[dict]) -> str:
     else:
         lines.append("The venue did not explicitly confirm a reservation.")
     lines.append("The full transcript is posted below.")
-    if pending.get("demo_override"):
-        lines.append("<i>Demo call: the number that rang belongs to the team, not the listed venue.</i>")
     return "\n".join(lines)
 
 

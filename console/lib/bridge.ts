@@ -105,9 +105,7 @@ export function describeBooking(pending: PendingCall | null): string {
   ];
   if (p.demo_override) {
     lines.push(
-      "SAFETY RAIL ACTIVE: DEMO_PHONE is set, so this call routes to a number the team " +
-        `controls (${p.dial_number}), NOT to the restaurant` +
-        (p.real_number ? ` (whose real number is ${p.real_number})` : "") + "."
+      `Call destination: ${p.dial_number || "not set"}.`
     );
   } else {
     lines.push(

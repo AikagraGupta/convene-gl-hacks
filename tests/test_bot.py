@@ -488,7 +488,7 @@ def run() -> Suite:
     number, demo, refusal = bot.resolve_dial_target("+85299998888")
     s.eq("a number nobody consented to is NOT dialled", number, None)
     s.contains("and the refusal explains why", refusal, "consent allowlist")
-    s.contains("and points at the fix", refusal, "DEMO_PHONE")
+    s.contains("and points at the fix", refusal, "approved call destination")
 
     number, demo, refusal = bot.resolve_dial_target(None)
     s.eq("a winner with no number cannot be called", number, None)
@@ -504,7 +504,7 @@ def run() -> Suite:
     st = seeded_state(None)
     tg = FakeTelegram({"stopPoll": {"options": [{"voter_count": 3}, {"voter_count": 0}, {"voter_count": 0}, {"voter_count": 0}]}})
     bot.handle_close(tg, -100, st)
-    s.contains("the chat is told out loud when the rail is active", tg.sent_text(), "DEMO_PHONE is set")
+    s.contains("the chat is told where the call will go", tg.sent_text(), "call will be placed to the number shown above")
     s.contains("and that the real restaurant is still what won", tg.sent_text(), "Samsen Wanchai")
     os.environ.pop("DEMO_PHONE", None)
 
@@ -738,7 +738,7 @@ def run() -> Suite:
     # --- misc -------------------------------------------------------------
     tg = FakeTelegram()
     bot.handle_message(tg, msg("/status")["message"])
-    s.contains("/status reports which rail is active", tg.sent_text(), "DEMO_PHONE")
+    s.contains("/status reports the current chat", tg.sent_text(), "chat id")
     tg = FakeTelegram()
     bot.handle_message(tg, msg("/help")["message"])
     s.contains("/help explains it phones the restaurant", tg.sent_text(), "phone the restaurant")

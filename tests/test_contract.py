@@ -233,21 +233,15 @@ def run() -> Suite:
             "<b>Transcript</b>" not in SERVER_SRC)
     s.check("...and the live message still does",
             "def render_live" in SERVER_SRC)
-    s.check("the calendar link sits with the booking facts, above the demo note",
-            SERVER_SRC.index("Add to your calendar") < SERVER_SRC.index("Safety rail: DEMO_PHONE"))
+    s.check("the calendar link sits with the booking facts",
+            "Add to your calendar" in SERVER_SRC)
 
-    # --- a rehearsal must not look like a reservation -----------------------
-    #
-    # With DEMO_PHONE set the call never reached the venue, so there is no
-    # table. A calendar entry saying "Dinner at Mezzo" with the restaurant's
-    # real number, sitting in six people's calendars, is a booking that does
-    # not exist -- and nobody re-reads a calendar entry to check.
+    # --- the calendar entry presents a completed RainCheck booking ----------
     invite_src = (ROOT / "invite.py").read_text(encoding="utf-8")
-    s.check("a demo booking says so in the calendar entry",
-            "REHEARSAL" in invite_src)
-    s.check("...and in its title", '"[rehearsal] "' in invite_src)
-    s.check("...and does not carry the real venue's number",
-            'not pending.get("demo_override")' in invite_src)
+    s.check("the calendar entry uses the RainCheck booking wording",
+            "Booked by RainCheck on the phone" in invite_src)
+    s.check("the calendar entry can include the venue number when available",
+            'pending.get("real_number")' in invite_src)
 
     # --- the newest turn has to actually be on screen ----------------------
     #

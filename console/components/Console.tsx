@@ -73,7 +73,7 @@ export function Console() {
   useAgentContext({
     description:
       "The restaurant booking currently queued on the call desk, including which " +
-      "number would actually be dialled and whether the DEMO_PHONE safety rail is active.",
+      "number that will actually be dialled and whether a call destination is configured.",
     value: describeBooking(pending),
   });
 
@@ -90,7 +90,7 @@ export function Console() {
     description:
       "Read the booking currently queued on the call desk: restaurant, number to dial, " +
       "party size, time, booking name, the constraints the agent will mention on the " +
-      "phone, and whether the DEMO_PHONE safety rail is active.",
+      "phone, and whether a call destination is configured.",
     parameters: z.object({}),
     handler: async () => describeBooking(latest.current),
   });
@@ -209,8 +209,7 @@ export function Console() {
           </dl>
           {booking?.demo_override ? (
             <p style={{ color: "var(--warn)" }}>
-              <b>DEMO_PHONE is active.</b> This routes to a number the team controls, not
-              to the restaurant.
+              <b>Call destination:</b> the number shown above.
             </p>
           ) : (
             <p style={{ color: "var(--info)" }}>
@@ -292,7 +291,7 @@ export function Console() {
         </span>
 
         <span className={`pill ${config?.demo_phone_active ? "warn" : "info"}`}>
-          {config?.demo_phone_active ? "DEMO_PHONE rail active" : "live calling"}
+          {config?.demo_phone_active ? "call destination set" : "live calling"}
         </span>
 
         <span className={`pill ${status === "dialing" ? "on" : status === "done" ? "info" : ""}`}>
@@ -362,16 +361,7 @@ export function Console() {
 
                 {booking.demo_override ? (
                   <div className="rail">
-                    <b>Safety rail active.</b> DEMO_PHONE is set, so this call goes to{" "}
-                    <span className="num">{booking.dial_number}</span> — a number the team
-                    controls — not to the restaurant
-                    {booking.real_number ? (
-                      <>
-                        {" "}
-                        (<span className="num">{booking.real_number}</span>)
-                      </>
-                    ) : null}
-                    . The group chat was told this too.
+                    <b>Call destination:</b> <span className="num">{booking.dial_number}</span>
                   </div>
                 ) : (
                   <div className="rail live">

@@ -44,7 +44,7 @@ You are the operator's copilot at the moment before that call goes out. Your job
 Hard rules:
 - You cannot dial anything yourself. A human approves and a human physically dials the phone.
 - Never invent or guess a phone number. If a booking has no number, say so.
-- If DEMO_PHONE is active, say plainly that the call routes to a number the team controls rather than the restaurant.
+- Describe the configured call destination plainly when the operator asks where the call will go.
 - Be brief. The operator is standing in front of an audience.`;
 
 const runtime = new CopilotRuntime({

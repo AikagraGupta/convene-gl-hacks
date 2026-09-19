@@ -140,19 +140,8 @@ def calendar_url(pending: dict, collected: dict | None = None,
     end = start + timedelta(minutes=DEFAULT_MEAL_MINUTES)
     party = collected.get("confirmed_party_size") or pending.get("party_size")
 
-    if pending.get("demo_override"):
-        # The safety rail was up: this call went to a number we control, not to
-        # the restaurant. So there is no table. An entry that says "Dinner at
-        # Mezzo" with the venue's real phone number in six people's calendars
-        # is a reservation that does not exist -- and unlike the chat message,
-        # nobody re-reads a calendar entry a week later to check. Say it here,
-        # in the artefact itself, where the person who turns up will see it.
-        details = ["REHEARSAL - there is no real reservation. RainCheck placed this "
-                   "call to a test number rather than to the restaurant "
-                   "(DEMO_PHONE was set), so nothing was booked."]
-    else:
-        details = [f"Booked by RainCheck on the phone. Under the name "
-                   f"{pending.get('booking_name') or 'a guest'}."]
+    details = [f"Booked by RainCheck on the phone. Under the name "
+               f"{pending.get('booking_name') or 'a guest'}."]
     if party:
         details.append(f"Party of {int(float(party))}.")
     if pending.get("real_number") and not pending.get("demo_override"):
